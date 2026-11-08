@@ -1,0 +1,152 @@
+import { env } from "cloudflare:workers";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { describe, expect, it } from "vitest";
+import { examples as examplesTable } from "../database/schema";
+import { addExample, type Example } from "../app/promo/examples.server";
+import { getDb } from "../app/server/db";
+import {
+  buildSystem,
+  buildUserContent,
+  ChannelRewrite,
+  DraftOutput,
+  type ImageSource,
+  pickExampleSet,
+} from "../app/promo/prompt";
+import type { PromoSettings } from "../app/promo/settings.server";
+
+const S: PromoSettings = {
+  footerBlog: "주소",
+  footerShort: "짧은 꼬리말",
+  priceTable: "4구 : 9,900",
+  voiceRules: "VOICE-RULES-MARK",
+  channelRules: "CHANNEL-RULES-MARK",
+};
+
+const ex = (id: number, channel: Example["channel"], kind: Example["kind"], title: string | null): Example => ({
+  id,
+  channel,
+  kind,
+  title,
+  body: `본문 ${id}`,
+  source: "blog_import",
+});
+
+const EX = {
+  blog: [ex(1, "blog", "case", "[장소] 단체 주문"), ex(2, "blog", "product", "시즌 상품")],
+  instagram: [ex(3, "instagram", "other", null)],
+  daangn: [ex(4, "daangn", "product", "이웃 소식")],
+  place: [],
+};
+
+const urlSrc = (url: string): ImageSource => ({ type: "url", url });
+const base = { kind: "product", memo: "크리스마스 마카롱", privateCustomer: false, attachPrices: true } as const;
+
+describe("buildUserContent", () => {
+  it("zero photos → no image blocks and no-marker instruction", () => {
+    const c = buildUserContent(base, []);
+    expect(c.filter((b) => b.type === "image")).toHaveLength(0);
+    expect(JSON.stringify(c)).toContain("[사진] 표시를 쓰지 마세요");
+    expect(JSON.stringify(c)).toContain("크리스마스 마카롱");
+  });
+
+  it("two photos → labelled url images in order", () => {
+    const c = buildUserContent(base, [urlSrc("https://x/a"), urlSrc("https://x/b")]);
+    expect(c.map((b) => (b.type === "text" ? b.text.split("\n")[0] : b.type))).toEqual([
+      "사진 1",
+      "image",
+      "사진 2",
+      "image",
+      expect.stringContaining("글 종류"),
+    ]);
+    expect(c[1]).toEqual({ type: "image", source: { type: "url", url: "https://x/a" } });
+    expect(c[3]).toEqual({ type: "image", source: { type: "url", url: "https://x/b" } });
+    expect(JSON.stringify(c.at(-1))).toContain("[사진 1]~[사진 2]");
+  });
+
+  it("passes base64 sources through untouched", () => {
+    const src: ImageSource = { type: "base64", media_type: "image/jpeg", data: "AAAA" };
+    const c = buildUserContent(base, [src]);
+    expect(c[1]).toEqual({ type: "image", source: src });
+  });
+
+  it("states kind and private-customer flag in Korean", () => {
+    const last = JSON.stringify(
+      buildUserContent({ ...base, kind: "case", privateCustomer: true }, []).at(-1),
+    );
+    expect(last).toContain("단체 주문 사례");
+    expect(last).toContain("개인 고객");
+  });
+});
+
+describe("buildSystem", () => {
+  it("system prompt is byte-identical for identical inputs and contains 절대 규칙", () => {
+    expect(buildSystem(S, EX)).toBe(buildSystem(S, EX));
+    expect(buildSystem(S, EX)).toContain("## 절대 규칙");
+  });
+
+  it("sections come in the fixed order, examples keep the given order", () => {
+    const out = buildSystem(S, EX);
+    const at = (s: string) => out.indexOf(s);
+    const order = ["## 말투 규칙", "## 채널 규칙", "## 절대 규칙", "## 예시 글"].map(at);
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(out).toContain("VOICE-RULES-MARK");
+    expect(out).toContain("CHANNEL-RULES-MARK");
+    expect(out).toContain("### 블로그 예시 1 (단체 주문 사례)");
+    expect(at("### 블로그 예시 2 (상품·시즌)")).toBeGreaterThan(at("### 블로그 예시 1"));
+    expect(out).toContain("### 인스타그램 예시 1");
+    expect(out).toContain("[장소] 단체 주문");
+  });
+
+  it("states the owner voice and the no-fixed-text rules", () => {
+    const out = buildSystem(S, EX);
+    expect(out).toContain("저희");
+    expect(out).toContain("- 꼬리말(배송 정책, 주소, 영업시간, 연락처)과 가격표는 쓰지 않는다. 프로그램이 따로 붙인다.");
+  });
+});
+
+describe("output schemas", () => {
+  it("DraftOutput accepts the documented shape", () => {
+    const ok = DraftOutput.safeParse({
+      blog: { title: "t", body: "b" },
+      instagram: { body: "b", hashtags: ["a"] },
+      daangn: { title: "t", body: "b" },
+      place: { body: "b" },
+      photos: [{ n: 1, note: "n" }],
+    });
+    expect(ok.success).toBe(true);
+  });
+
+  it("ChannelRewrite allows null title and hashtags", () => {
+    expect(ChannelRewrite.safeParse({ title: null, body: "b", hashtags: null }).success).toBe(true);
+  });
+
+  it("SDK output format carries no keywords structured outputs rejects", () => {
+    for (const schema of [DraftOutput, ChannelRewrite]) {
+      const json = JSON.stringify(zodOutputFormat(schema).schema);
+      expect(json).not.toMatch(/"(minimum|maximum|minLength|maxLength|pattern|default)"/);
+    }
+  });
+});
+
+describe("pickExampleSet", () => {
+  it("takes 3 blog and 2 of each other channel", async () => {
+    const db = getDb(env.DB);
+    await db.delete(examplesTable);
+    const now = new Date(Date.UTC(2026, 10, 1));
+    for (const channel of ["blog", "instagram", "daangn", "place"] as const) {
+      for (let i = 0; i < 4; i++) {
+        await addExample(db, { channel, kind: "product", title: null, body: `${channel}${i}`, source: "blog_import" }, now);
+      }
+    }
+    const set = await pickExampleSet(db, "product");
+    expect(Object.fromEntries(Object.entries(set).map(([k, v]) => [k, v.length]))).toEqual({
+      blog: 3,
+      instagram: 2,
+      daangn: 2,
+      place: 2,
+    });
+    expect(set.blog.every((e) => e.channel === "blog")).toBe(true);
+    await db.delete(examplesTable);
+  });
+});

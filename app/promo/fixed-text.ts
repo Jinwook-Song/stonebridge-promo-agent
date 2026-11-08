@@ -1,0 +1,33 @@
+import type { PromoSettings } from "./settings.server";
+import type { Channel } from "./types";
+
+// Spec §5.4: footers and the price table are stored text the code appends verbatim,
+// so the model can never print a wrong price or phone number.
+
+function normalizeHashtags(tags: string[] | null | undefined): string {
+  const seen = new Set<string>();
+  for (const raw of tags ?? []) {
+    const tag = raw.trim().replace(/^#+/, "").trim();
+    if (tag) seen.add(tag);
+  }
+  return [...seen].map((tag) => `#${tag}`).join(" ");
+}
+
+export function withFixedText(
+  channel: Channel,
+  d: { body: string; hashtags?: string[] | null },
+  s: PromoSettings,
+  attachPrices: boolean,
+): string {
+  const prices = attachPrices ? s.priceTable : "";
+  const parts = {
+    blog: [d.body, prices, s.footerBlog],
+    instagram: [d.body, s.footerShort, normalizeHashtags(d.hashtags)],
+    daangn: [d.body, prices, s.footerShort],
+    place: [d.body],
+  }[channel];
+  return parts
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
