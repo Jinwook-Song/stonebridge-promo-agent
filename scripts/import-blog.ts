@@ -1,4 +1,4 @@
-// Usage: npx tsx scripts/import-blog.ts --blog <blogId> --footer-start "<footer first line>" [--limit 50]
+// Usage: npx tsx scripts/import-blog.ts --blog <blogId> --footer-start "<line start>" [--footer-start "<line start>" ...] [--limit 50]
 // Writes private/examples.json and private/seed-examples.sql (git-ignored).
 import { mkdir, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
@@ -18,16 +18,16 @@ const DELAY_MS = 500;
 const { values } = parseArgs({
   options: {
     blog: { type: "string" },
-    "footer-start": { type: "string" },
+    "footer-start": { type: "string", multiple: true },
     limit: { type: "string", default: "50" },
   },
 });
 const blog = values.blog;
-const footerStart = values["footer-start"];
+const footerStarts = (values["footer-start"] ?? []).filter((marker) => marker.trim() !== "");
 const limit = Number(values.limit);
-if (!blog || !footerStart || !Number.isInteger(limit) || limit < 1) {
+if (!blog || footerStarts.length === 0 || !Number.isInteger(limit) || limit < 1) {
   console.error(
-    'Usage: npx tsx scripts/import-blog.ts --blog <blogId> --footer-start "<footer first line>" [--limit 50]',
+    'Usage: npx tsx scripts/import-blog.ts --blog <blogId> --footer-start "<line start>" [--footer-start "<line start>" ...] [--limit 50]',
   );
   process.exit(1);
 }
@@ -44,14 +44,19 @@ const items = parseRss(await fetchText(`https://rss.blog.naver.com/${blog}.xml`)
 console.log(`RSS: ${items.length} posts`);
 
 const rows: SeedExample[] = [];
+let skipped = 0;
+let noMarker = 0;
 for (const [index, item] of items.entries()) {
   if (index > 0) await sleep(DELAY_MS);
   try {
     const html = await fetchText(
       `https://m.blog.naver.com/PostView.naver?blogId=${blog}&logNo=${item.logNo}`,
     );
-    const body = stripFooter(parsePostHtml(html), footerStart);
+    const full = parsePostHtml(html);
+    const body = stripFooter(full, footerStarts);
+    if (body === full) noMarker += 1;
     if (!body) {
+      skipped += 1;
       console.warn(`skip ${item.logNo}: empty body`);
       continue;
     }
@@ -66,11 +71,21 @@ for (const [index, item] of items.entries()) {
       createdAt: new Date(item.pubDate).toISOString(),
     });
   } catch (error) {
+    skipped += 1;
     console.warn(`skip ${item.logNo}: ${error instanceof Error ? error.message : error}`);
   }
+}
+
+console.log(`footer: ${noMarker} of ${items.length} posts matched no --footer-start marker`);
+if (rows.length === 0) {
+  console.error(`no examples imported (skipped ${skipped} of ${items.length}); leaving private/ untouched`);
+  process.exit(1);
 }
 
 await mkdir("private", { recursive: true });
 await writeFile("private/examples.json", JSON.stringify(rows, null, 2) + "\n");
 await writeFile("private/seed-examples.sql", buildSeedSql(rows) + "\n");
-console.log(`wrote ${rows.length} examples to private/examples.json and private/seed-examples.sql`);
+console.log(
+  `wrote ${rows.length} of ${items.length}, skipped ${skipped} (private/examples.json, private/seed-examples.sql)`,
+);
+if (skipped > 0) process.exitCode = 1;

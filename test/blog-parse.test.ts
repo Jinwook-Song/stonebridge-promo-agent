@@ -53,6 +53,17 @@ describe("parsePostHtml", () => {
   });
 });
 
+describe("invisible characters", () => {
+  it("strips zero-width, directional and BOM characters from paragraphs", () => {
+    const junk = "\u200b\u200c\u200d\u200e\u200f\u2060\u202a\u202e\ufeff";
+    const html =
+      `<p class="se-text-paragraph"><span>가${junk}나</span></p>` +
+      `<p class="se-text-paragraph"><span>${junk}</span></p>` +
+      `<p class="se-text-paragraph"><span>다</span></p>`;
+    expect(parsePostHtml(html)).toBe("가나\n\n다");
+  });
+});
+
 describe("classifyKind", () => {
   it.each([
     ["[OO초등학교] 샌드위치 + 음료 단체주문", "case"],
@@ -67,12 +78,24 @@ describe("classifyKind", () => {
 
 describe("stripFooter", () => {
   it("cuts from the first line starting with the marker", () => {
-    expect(stripFooter("본문\n\n[사진 1]\n안내 시작 here\n더 많은 안내", "안내 시작")).toBe(
+    expect(stripFooter("본문\n\n[사진 1]\n안내 시작 here\n더 많은 안내", ["안내 시작"])).toBe(
       "본문\n\n[사진 1]",
     );
   });
-  it("leaves the body alone when the marker is absent", () => {
-    expect(stripFooter("본문\n끝", "안내 시작")).toBe("본문\n끝");
+  it("leaves the body alone when no marker matches", () => {
+    expect(stripFooter("본문\n끝", ["안내 시작", "다른 안내"])).toBe("본문\n끝");
+  });
+  it("cuts at the earliest matching line whichever marker it is", () => {
+    const body = "본문\n[사진 1]\n두번째 안내\n중간\n첫번째 안내\n끝";
+    expect(stripFooter(body, ["첫번째 안내", "두번째 안내"])).toBe("본문\n[사진 1]");
+    expect(stripFooter(body, ["두번째 안내", "첫번째 안내"])).toBe("본문\n[사진 1]");
+  });
+  it("matches trimmed line starts only, not mid-line text", () => {
+    expect(stripFooter("본문\n  안내 시작\n끝", ["안내 시작"])).toBe("본문");
+    expect(stripFooter("본문 안내 시작\n끝", ["안내 시작"])).toBe("본문 안내 시작\n끝");
+  });
+  it("ignores empty markers", () => {
+    expect(stripFooter("본문\n끝", [""])).toBe("본문\n끝");
   });
 });
 

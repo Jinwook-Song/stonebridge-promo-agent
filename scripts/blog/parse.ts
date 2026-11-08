@@ -59,6 +59,9 @@ export function parseRss(xml: string): RssItem[] {
 const BODY_TOKEN =
   /<(div|p|span|h[1-6])\b[^>]*se-title-text[^>]*>[\s\S]*?<\/\1>|<p\b[^>]*class="[^"]*se-text-paragraph[^"]*"[^>]*>([\s\S]*?)<\/p>|class="[^"]*se-image-resource[^"]*"/g;
 
+// Zero-width space/joiners, LTR/RTL marks, bidi embeddings, word joiner, BOM.
+const INVISIBLE = /[\u200b-\u200f\u2060\u202a-\u202e\ufeff]/g;
+
 export function parsePostHtml(html: string): string {
   const lines: string[] = [];
   let photo = 0;
@@ -68,7 +71,7 @@ export function parsePostHtml(html: string): string {
       const text = unescapeHtml(
         paragraph.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, ""),
       )
-        .replace(/[​﻿]/g, "")
+        .replace(INVISIBLE, "")
         .trim();
       lines.push(text);
     } else if (whole.includes("se-image-resource")) {
@@ -83,10 +86,14 @@ export function classifyKind(title: string): PostKind {
   return /단체\s?주문|\d+\s?(세트|인분)|\d{3,}\s?개/.test(title) ? "case" : "product";
 }
 
-// Cuts the footer off at the first line that starts with `footerStart`.
-export function stripFooter(body: string, footerStart: string): string {
+// Cuts the footer off at the earliest line that starts with any of `markers`
+// (compared against the trimmed line).
+export function stripFooter(body: string, markers: string[]): string {
   const lines = body.split("\n");
-  const at = lines.findIndex((line) => line.trim().startsWith(footerStart));
+  const at = lines.findIndex((line) => {
+    const text = line.trim();
+    return markers.some((marker) => marker !== "" && text.startsWith(marker));
+  });
   return (at === -1 ? body : lines.slice(0, at).join("\n")).trim();
 }
 
