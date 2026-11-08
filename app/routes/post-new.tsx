@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import { Field, Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
+import { startGeneration } from "../promo/generate.server";
 import { createPost } from "../promo/posts.server";
 import { resizeToJpeg } from "../promo/resize-image.client";
 import { KIND_LABELS, MAX_MEMO_CHARS, MAX_PHOTOS, POST_KINDS, type PostKind } from "../promo/types";
@@ -43,7 +44,8 @@ export async function action({ request }: Route.ActionArgs) {
       },
       new Date(),
     );
-    // Task 7 starts the generation right here.
+    // A fresh post is never "generating", and a start failure is recorded on the post itself.
+    await startGeneration(env, getDb(env.DB), id, {});
     return redirect(`/posts/${id}`);
   } catch (e) {
     if (e instanceof DomainError && (e.code === "INVALID_INPUT" || e.code === "INVALID_FILE")) return { error: e.message };

@@ -84,6 +84,12 @@ describe("buildUserContent", () => {
     expect(off).not.toContain("가격표");
   });
 
+  it("says the price table goes under the 블로그·당근 bodies only", () => {
+    const on = JSON.stringify(buildUserContent({ ...base, attachPrices: true }, []).at(-1));
+    expect(on).toContain("블로그·당근 본문 아래에 가격표가 따로 붙습니다");
+    expect(on).toContain("인스타·플레이스 본문에는 '아래'를 가리키는 말을 쓰지 마세요.");
+  });
+
   it("states kind and private-customer flag in Korean", () => {
     const last = JSON.stringify(
       buildUserContent({ ...base, kind: "case", privateCustomer: true }, []).at(-1),
@@ -125,6 +131,12 @@ describe("buildSystem", () => {
     const out = buildSystem(S, EX);
     expect(out).toContain('광고 문구("~해 보세요!", "놓치지 마세요"), 과한 칭찬, 긴 문장은 쓰지 않는다. 한 줄에 한 문장, 짧게.');
     expect(out).not.toContain("마케팅");
+  });
+
+  it("makes clear the ad-copy ban is about phrasing, not exclamation marks", () => {
+    expect(buildSystem(S, EX)).toContain(
+      "광고 문구를 피하라는 것은 표현 이야기다. 느낌표는 사장님 말투대로 써도 된다.",
+    );
   });
 
   it("states the owner voice and the no-fixed-text rules", () => {

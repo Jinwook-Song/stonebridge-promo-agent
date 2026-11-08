@@ -1,4 +1,4 @@
-import { env, WorkflowEntrypoint } from "cloudflare:workers";
+import { env } from "cloudflare:workers";
 import { createRequestHandler } from "react-router";
 import { withD1Session } from "../app/server/db";
 
@@ -34,7 +34,5 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-// Bound as GENERATE in wrangler.jsonc. Task 7 fills in the generation steps.
-export class GeneratePostWorkflow extends WorkflowEntrypoint<Env, { postId: number }> {
-  async run(): Promise<void> {}
-}
+// Bound as GENERATE in wrangler.jsonc.
+export { GeneratePostWorkflow } from "./generate-workflow";

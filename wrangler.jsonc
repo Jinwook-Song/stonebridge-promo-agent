@@ -13,6 +13,15 @@
 		"enabled": true
 	},
 	"upload_source_maps": true,
+	// Both can be overridden in .dev.vars for local dev. Declared here because with `secrets`
+	// set, .dev.vars keys that are neither secrets nor vars are not loaded.
+	"vars": {
+		// Origin Claude fetches signed photo URLs from. Placeholder until the first deploy (Task 9).
+		// Local dev: http://localhost:5173 (not https, so photos go to Claude as base64).
+		"PUBLIC_ORIGIN": "https://stonebridge-promo.example.workers.dev",
+		// "1" = canned drafts instead of calling Claude. Local dev only.
+		"FAKE_CLAUDE": "0"
+	},
 	// set via `wrangler secret put` (prod) / .dev.vars (local)
 	"secrets": {
 		"required": ["ANTHROPIC_API_KEY", "SESSION_SECRET", "OWNER_INITIAL_PASSWORD", "IMAGE_URL_SECRET"]
