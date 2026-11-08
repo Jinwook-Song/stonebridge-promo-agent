@@ -49,6 +49,46 @@ describe("findUnsupportedNumbers", () => {
     expect(findUnsupportedNumbers("3세트", ["세 세트"])).toEqual([]);
   });
 
+  it("reads spaced tens and units as one number", () => {
+    expect(findUnsupportedNumbers("스물 다섯 개 열 두 잔", ["25개", "12잔"])).toEqual([]);
+    expect(findUnsupportedNumbers("스물 다섯 개", ["5개"])).toEqual(["스물 다섯 개"]);
+  });
+
+  it("needs a word boundary or a particle after the counter", () => {
+    expect(findUnsupportedNumbers("네 달콤한 디저트 두 명절 세 개발 두 번째", [])).toEqual([]);
+    expect(findUnsupportedNumbers("세 개씩 두 달간 네 명이 다섯시에", [])).toEqual([
+      "세 개",
+      "두 달",
+      "네 명",
+      "다섯시",
+    ]);
+  });
+
+  it("covers cafe counters", () => {
+    expect(findUnsupportedNumbers("케이크 두 조각, 커피 세 잔, 두 번 방문, 네 종류", [])).toEqual([
+      "두 조각",
+      "세 잔",
+      "두 번",
+      "네 종류",
+    ]);
+  });
+
+  it("flags Sino-Korean numbers before a counter and reads their value", () => {
+    expect(findUnsupportedNumbers("오천 원 할인 이십 명 한정 삼만오천 원 만 원", [])).toEqual([
+      "오천 원",
+      "이십 명",
+      "삼만오천 원",
+      "만 원",
+    ]);
+    expect(findUnsupportedNumbers("오천 원 이십 명", ["5,000원", "20명"])).toEqual([]);
+    expect(findUnsupportedNumbers("이 원두 사이 천천히", [])).toEqual([]);
+    expect(findUnsupportedNumbers("30만원 이상 무료배송, 1만원으로", ["30만원 이상", "1만원"])).toEqual([]);
+  });
+
+  it("한 in the sources still backs a 1 in the draft", () => {
+    expect(findUnsupportedNumbers("1개 증정", ["한 개 증정"])).toEqual([]);
+  });
+
   it("ignores 한 (one), numerals inside words, and numerals without a counter", () => {
     expect(findUnsupportedNumbers("마카롱 한 상자 한 분 한 분 네 감사합니다 두근두근 세트 가게", [])).toEqual([]);
     expect(findUnsupportedNumbers("열한 개", [])).toEqual(["열한 개"]);
