@@ -1,8 +1,8 @@
 import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { drafts, photos, posts } from "../database/schema";
 import { createPost, getPost, listPosts, type NewPostInput } from "../app/promo/posts.server";
-import { getDb } from "../app/server/db";
+import { getDb, type Db } from "../app/server/db";
 import { DomainError } from "../app/server/errors";
 
 const db = getDb(env.DB);
@@ -139,5 +139,72 @@ describe("getPost / listPosts", () => {
     expect(list[1].memoPreview).toBe("첫 번째");
     expect(list[0].status).toBe("draft");
     expect(await listPosts(db, 1)).toHaveLength(1);
+  });
+});
+
+describe("createPost rollback", () => {
+  const photoKeys = async () => (await env.PHOTOS.list({ prefix: "posts/" })).objects.map((o) => o.key);
+
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(async () => {
+    const stale = await photoKeys();
+    if (stale.length > 0) await env.PHOTOS.delete(stale);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  /** A bucket whose Nth put (1-based) fails, after the others have finished at their own pace. */
+  function bucketFailingPut(n: number): R2Bucket {
+    let calls = 0;
+    return new Proxy(env.PHOTOS, {
+      get(target, prop) {
+        if (prop !== "put") return Reflect.get(target, prop).bind(target);
+        return async (...args: Parameters<R2Bucket["put"]>) => {
+          const call = ++calls;
+          if (call === n) throw new Error("r2 put failed");
+          // Let the failure surface first, so a cleanup that does not wait would race these.
+          await new Promise((r) => setTimeout(r, 20));
+          return target.put(...args);
+        };
+      },
+    });
+  }
+
+  it("a failed put leaves no post, photo rows or R2 objects, even for puts finishing late", async () => {
+    const err = await createPost(db, bucketFailingPut(2), { ...base, photos: [jpg("a"), jpg("b"), jpg("c")] }, T0).catch((e) => e);
+    expect(err).toBeInstanceOf(DomainError);
+    expect(err.message).toMatch(/[가-힣]/);
+    expect(await db.select().from(posts)).toHaveLength(0);
+    expect(await db.select().from(photos)).toHaveLength(0);
+    expect(await photoKeys()).toEqual([]);
+    expect(errorSpy).toHaveBeenCalled();
+  });
+
+  it("a failed photos insert removes the post and the uploaded objects", async () => {
+    const failingDb = new Proxy(db, {
+      get(target, prop) {
+        if (prop === "insert") {
+          return (table: unknown) => {
+            if (table === photos) throw new Error("d1 insert failed");
+            return target.insert(table as typeof posts);
+          };
+        }
+        return Reflect.get(target, prop);
+      },
+    }) as Db;
+    await expect(createPost(failingDb, env.PHOTOS, { ...base, photos: [jpg("a"), jpg("b")] }, T0)).rejects.toThrow(DomainError);
+    expect(await db.select().from(posts)).toHaveLength(0);
+    expect(await photoKeys()).toEqual([]);
+  });
+
+  it("still reports the original failure when cleanup itself fails", async () => {
+    const bucket = new Proxy(bucketFailingPut(1), {
+      get(target, prop) {
+        if (prop === "delete") return async () => { throw new Error("r2 delete failed"); };
+        return Reflect.get(target, prop);
+      },
+    });
+    await expect(createPost(db, bucket, { ...base, photos: [jpg("a"), jpg("b")] }, T0)).rejects.toThrow(DomainError);
+    expect(await db.select().from(posts)).toHaveLength(0);
   });
 });

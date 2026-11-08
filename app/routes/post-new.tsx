@@ -52,7 +52,7 @@ export async function action({ request }: Route.ActionArgs) {
     // Task 7 starts the generation right here.
     return redirect(`/posts/${id}`);
   } catch (e) {
-    if (e instanceof DomainError && e.code === "INVALID_INPUT") return { error: e.message };
+    if (e instanceof DomainError && (e.code === "INVALID_INPUT" || e.code === "INVALID_FILE")) return { error: e.message };
     throw e;
   }
 }

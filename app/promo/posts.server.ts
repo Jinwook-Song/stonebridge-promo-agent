@@ -73,14 +73,20 @@ export async function createPost(
     .returning({ id: posts.id });
 
   const keys = input.photos.map((_, i) => `posts/${id}/${i + 1}.jpg`);
-  try {
-    // The client re-encodes every photo to JPEG before upload, hence the fixed .jpg key.
-    await Promise.all(
-      input.photos.map(async (file, i) =>
-        bucket.put(keys[i], await file.arrayBuffer(), { httpMetadata: { contentType: "image/jpeg" } }),
-      ),
-    );
-    if (keys.length > 0) {
+  // The client re-encodes every photo to JPEG before upload, hence the fixed .jpg key.
+  // allSettled, not all: after one put fails the others keep running, and cleanup must
+  // not start until every put has finished or it could miss an object written late.
+  const puts = await Promise.allSettled(
+    input.photos.map(async (file, i) =>
+      bucket.put(keys[i], await file.arrayBuffer(), { httpMetadata: { contentType: "image/jpeg" } }),
+    ),
+  );
+  const written = keys.filter((_, i) => puts[i].status === "fulfilled");
+  const failedPut = puts.find((r): r is PromiseRejectedResult => r.status === "rejected");
+
+  let failure: unknown = failedPut?.reason;
+  if (!failedPut && keys.length > 0) {
+    try {
       await db.insert(photos).values(
         keys.map((r2Key, i) => ({
           postId: id,
@@ -90,13 +96,31 @@ export async function createPost(
           height: input.photoSizes?.[i]?.height ?? 0,
         })),
       );
+    } catch (e) {
+      failure = e;
     }
-  } catch (e) {
-    // Do not leave a half-made post (or orphan objects) behind.
-    await Promise.allSettled([bucket.delete(keys), db.delete(posts).where(eq(posts.id, id))]);
-    throw e;
+  }
+
+  if (failure !== undefined) {
+    console.error("createPost failed, rolling back", { postId: id, failure });
+    await rollback(db, bucket, id, written);
+    throw new DomainError("INVALID_FILE", "사진을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
   }
   return id;
+}
+
+/** Removes exactly the objects that were written, then the rows. Failures are logged, never thrown. */
+async function rollback(db: Db, bucket: R2Bucket, postId: number, writtenKeys: string[]): Promise<void> {
+  const step = async (what: string, fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (e) {
+      console.error(`createPost rollback: ${what} failed`, { postId, error: e });
+    }
+  };
+  if (writtenKeys.length > 0) await step("R2 delete", () => bucket.delete(writtenKeys));
+  await step("photo rows delete", () => db.delete(photos).where(eq(photos.postId, postId)));
+  await step("post row delete", () => db.delete(posts).where(eq(posts.id, postId)));
 }
 
 export async function getPost(db: Db, id: number): Promise<PostView | null> {
