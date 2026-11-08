@@ -20,7 +20,7 @@
 		// while it is an `example` host, generation fails at once with an admin message
 		// (docs/deploy-checklist.md).
 		// Local dev: http://localhost:5173 (not https, so photos go to Claude as base64).
-		"PUBLIC_ORIGIN": "https://stonebridge-promo.example.workers.dev",
+		"PUBLIC_ORIGIN": "https://stonebridge-promo.wlsdnr129.workers.dev",
 		// "1" = canned drafts instead of calling Claude. Local dev only.
 		"FAKE_CLAUDE": "0"
 	},
@@ -33,7 +33,7 @@
 			"binding": "DB",
 			"database_name": "promo-agent",
 			// placeholder until `wrangler d1 create promo-agent` (Task 9)
-			"database_id": "TBD-after-d1-create",
+			"database_id": "1c172fe9-6cbb-4f6b-b3ca-16fe498076dc",
 			"migrations_dir": "drizzle"
 		}
 	],
