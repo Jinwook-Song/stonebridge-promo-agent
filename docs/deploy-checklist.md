@@ -42,6 +42,7 @@
 
 - [ ] `npx wrangler tail`을 켜 둔다.
 - [ ] 사진 2장으로 글 하나를 만든다 → 네 채널 초안이 다 나오는지 본다.
-- [ ] 한 채널을 **다시 쓰기** 한다 → 로그의 `claude usage`에서 `cache_read_input_tokens`가 0보다 큰지 확인한다 (시스템 프롬프트 캐시).
+- [ ] 한 채널을 **다시 쓰기** 두 번 한다 → 두 번째 다시 쓰기의 `claude usage`에서 `cache_read_input_tokens`가 0보다 큰지 확인한다 (시스템 프롬프트 캐시).
+  - 첫 다시 쓰기는 캐시를 못 읽는 게 정상이다. 초안 만들기와 다시 쓰기는 출력 JSON 스키마가 달라서 캐시 앞부분이 다르다 (2026-11-08 실측: 초안 6,467 토큰 기록 → 첫 다시 쓰기 5,424 토큰 새로 기록 → 두 번째 다시 쓰기 5,424 토큰 읽음). 첫 다시 쓰기마다 약 $0.02가 더 든다.
 - [ ] 두 호출의 토큰 수(`input_tokens`, `cache_*`, `output_tokens`)와 걸린 시간을 적어 둔다.
 - [ ] 시간이 단계 제한(15분, `STEP_TIMEOUT_MINUTES`)에 가깝거나 `max_tokens`로 잘리면 `app/promo/generate.server.ts`의 타임아웃 / `app/promo/claude.server.ts`의 `MAX_TOKENS`를 조정한다. 타임아웃을 바꾸면 `STALE_CLAIM_MS`는 자동으로 따라간다.
