@@ -1,4 +1,4 @@
-import type * as React from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { env } from "cloudflare:workers";
 import { CircleAlertIcon, CircleCheckIcon } from "lucide-react";
 import { Form, useFetcher, useNavigation, useSearchParams } from "react-router";
@@ -24,7 +24,7 @@ import {
   saveAlertSettings,
   type AlertSettings,
 } from "../kakao/alerts.server";
-import { describeKakaoError, disconnect, getLink, kakaoConfig, sendToMe } from "../kakao/link.server";
+import { describeKakaoError, disconnect, getLink, kakaoConfig, linkExpired, sendToMe } from "../kakao/link.server";
 import { ALERT_LABELS, type AlertKind, type AlertStatus } from "../kakao/types";
 import type { KakaoResult } from "./kakao.callback";
 import { formatDay } from "../promo/format-date";
@@ -54,10 +54,17 @@ export async function loader({}: Route.LoaderArgs) {
     link: link && {
       idTail: link.kakaoUserId.slice(-4),
       linkedAt: link.linkedAt,
-      needsRelogin: link.needsRelogin,
+      needsRelogin: linkExpired(link, new Date()),
     },
     alerts,
-    recent: recent.map(({ id, kind, periodKey, status, error }) => ({ id, kind, periodKey, status, error })),
+    recent: recent.map(({ id, kind, periodKey, status, error, createdAt }) => ({
+      id,
+      kind,
+      periodKey,
+      // A row left at `sending` for long means the worker died mid-send; we can't tell if it went.
+      status: status === "sending" && Date.now() - new Date(createdAt).getTime() > STUCK_MS ? "unknown" : status,
+      error,
+    })),
   };
   return { settings, examples, kakao };
 }
@@ -160,6 +167,8 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
     <div className="flex flex-col gap-6">
       <h1 className="text-lg font-semibold">설정</h1>
 
+      <KakaoSection kakao={loaderData.kakao} />
+
       {/* The boxes are uncontrolled; after a save, remount them on the reloaded settings (a blanked
           rules box comes back showing the default it now uses). Example toggles use fetchers,
           so they never reset what she is typing here. */}
@@ -175,8 +184,6 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
           {saving ? "저장 중…" : "저장"}
         </Button>
       </Form>
-
-      <KakaoSection kakao={loaderData.kakao} />
 
       <section aria-labelledby="examples-title" className="flex flex-col gap-3">
         <div>
@@ -296,8 +303,10 @@ type KakaoView = {
   configured: boolean;
   link: { idTail: string; linkedAt: string; needsRelogin: boolean } | null | undefined;
   alerts: AlertSettings;
-  recent: { id: number; kind: AlertKind; periodKey: string; status: AlertStatus; error: string | null }[];
+  recent: { id: number; kind: AlertKind; periodKey: string; status: AlertStatus | "unknown"; error: string | null }[];
 };
+
+const STUCK_MS = 10 * 60_000;
 
 const KAKAO_RESULT: Record<KakaoResult, { ok: boolean; text: string }> = {
   connected: { ok: true, text: "카카오 계정을 연결했어요. '시험 보내기'로 카톡이 오는지 확인해 주세요." },
@@ -311,16 +320,37 @@ const KAKAO_RESULT: Record<KakaoResult, { ok: boolean; text: string }> = {
   error: { ok: false, text: "카카오 연결에 실패했어요." },
 };
 
-const STATUS_TEXT: Record<AlertStatus, string> = { sending: "보내는 중", sent: "보냄", failed: "실패" };
+const STATUS_TEXT: Record<AlertStatus | "unknown", string> = {
+  sending: "보내는 중",
+  sent: "보냄",
+  failed: "실패",
+  unknown: "확인 안 됨",
+};
 
 function KakaoSection({ kakao }: { kakao: KakaoView }) {
-  const [params] = useSearchParams();
-  const result = params.get("kakao") as KakaoResult | null;
-  const banner = result && KAKAO_RESULT[result];
-  const code = params.get("code");
+  const [params, setParams] = useSearchParams();
+  // One-shot: keep the login result in state and drop it from the URL, so a reload, a later
+  // settings save or 연결 끊기 never shows a stale "연결했어요".
+  const [{ result, code }] = useState(() => ({
+    result: params.get("kakao") as KakaoResult | null,
+    code: params.get("code"),
+  }));
+  useEffect(() => {
+    if (!params.has("kakao") && !params.has("code")) return;
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("kakao");
+        next.delete("code");
+        return next;
+      },
+      { replace: true, preventScrollReset: true },
+    );
+  }, [params, setParams]);
   const test = useFetcher<ActionResult>();
   const disconnectFetcher = useFetcher<ActionResult>();
   const { link } = kakao;
+  const banner = result && KAKAO_RESULT[result] && !(result === "connected" && !link) ? KAKAO_RESULT[result] : null;
   const ready = kakao.configured && !!link && !link.needsRelogin;
 
   return (
@@ -436,7 +466,7 @@ function AlertToggle({
   enabled: boolean;
   description: string;
   canSend: boolean;
-  children?: React.ReactNode;
+  children?: ReactNode;
 }) {
   const fetcher = useFetcher<ActionResult>();
   const pending = fetcher.formData;

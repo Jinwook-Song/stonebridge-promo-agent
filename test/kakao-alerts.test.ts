@@ -15,6 +15,7 @@ import {
 } from "../app/kakao/alerts.server";
 import { MEMO_TEXT_LIMIT, type Fetch } from "../app/kakao/client.server";
 import { getDb } from "../app/server/db";
+import wranglerConfig from "../wrangler.jsonc?raw";
 
 const db = getDb(env.DB);
 const ORIGIN = "https://app.example";
@@ -190,5 +191,22 @@ describe("runScheduled: 홍보글 알림", () => {
     await saveAlertSettings(db, { orderEnabled: true, monthlyDay: 8 });
     await link();
     expect(await runScheduled(CRONS.monthly, at10("2026-11-08"), deps())).toBe("disabled");
+  });
+});
+
+describe("cron wiring", () => {
+  it("wrangler.jsonc triggers match CRONS", () => {
+    const crons = wranglerConfig.match(/"crons"\s*:\s*\[([^\]]*)\]/)?.[1];
+    const listed = [...(crons ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(listed.sort()).toEqual(Object.values(CRONS).sort());
+  });
+
+  it("the daily 발주 cron keeps the Kakao link alive even with every alert off", async () => {
+    await link({ refreshExpiresAt: "2026-11-20T00:00:00Z" });
+    const fetch = vi.fn<Fetch>(async () => new Response(JSON.stringify({ access_token: "a2", expires_in: 100, refresh_token: "r2", refresh_token_expires_in: 5183999 })));
+    expect(await runScheduled(CRONS.order, ORDER_TIME, deps(fetch))).toBe("disabled");
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [row] = await db.select().from(kakaoLink);
+    expect(row.refreshToken).toBe("r2");
   });
 });

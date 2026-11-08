@@ -146,6 +146,8 @@ export async function getAccessToken(
       ...(tokens.refreshToken && tokens.refreshExpiresIn !== undefined
         ? { refreshToken: tokens.refreshToken, refreshExpiresAt: at(now, tokens.refreshExpiresIn) }
         : {}),
+      // A concurrent request may have flagged relogin while this refresh was in flight.
+      needsRelogin: false,
       lastError: null,
     })
     .where(and(eq(kakaoLink.id, LINK_ID), eq(kakaoLink.refreshToken, link.refreshToken)))
@@ -155,6 +157,32 @@ export async function getAccessToken(
     return (await requireLink(db)).accessToken;
   }
   return tokens.accessToken;
+}
+
+/** Kakao only rotates the refresh token when less than a month is left. */
+const KEEP_ALIVE_WINDOW_MS = 31 * 86400_000;
+
+/**
+ * Called daily by the cron, whether or not any alert is on: in the last month of the refresh
+ * token, refresh (Kakao then issues a new 2-month one), so the link never lapses just because
+ * alerts were off or monthly-only. Errors are logged, never thrown.
+ */
+export async function keepAlive(db: Db, cfg: KakaoConfig, now: Date, fetch: Fetch): Promise<"none" | "fresh" | "refreshed" | "failed"> {
+  const link = await getLink(db);
+  if (!link || link.needsRelogin) return "none";
+  if (new Date(link.refreshExpiresAt).getTime() - now.getTime() > KEEP_ALIVE_WINDOW_MS) return "fresh";
+  try {
+    await getAccessToken(db, cfg, now, fetch, true);
+    return "refreshed";
+  } catch (e) {
+    console.error("kakao keep-alive refresh failed", e);
+    return "failed";
+  }
+}
+
+/** Needs a new login: Kakao refused the refresh token, or it has run out. */
+export function linkExpired(link: KakaoLinkRow, now: Date): boolean {
+  return link.needsRelogin || new Date(link.refreshExpiresAt).getTime() <= now.getTime();
 }
 
 /** Sends to the connected account's '나와의 채팅'. On -401 refreshes once and retries once. */

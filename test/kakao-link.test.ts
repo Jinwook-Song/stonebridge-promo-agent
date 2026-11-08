@@ -9,6 +9,8 @@ import {
   getAccessToken,
   getLink,
   KakaoLinkError,
+  keepAlive,
+  linkExpired,
   kakaoConfig,
   sendToMe,
 } from "../app/kakao/link.server";
@@ -193,6 +195,18 @@ describe("getAccessToken", () => {
     expect((await getLink(db))?.needsRelogin).toBe(false);
   });
 
+  it("a successful refresh clears a relogin flag a racing request set meanwhile", async () => {
+    await seed({ accessExpiresAt: now.toISOString() });
+    const { fetch } = fakeKakao({
+      "/oauth/token": async () => {
+        await db.update(kakaoLink).set({ needsRelogin: true, lastError: "KOE322: raced" });
+        return json({ access_token: "a2", expires_in: 100, refresh_token: "r2", refresh_token_expires_in: 200 });
+      },
+    });
+    expect(await getAccessToken(db, cfg, now, fetch)).toBe("a2");
+    expect(await getLink(db)).toMatchObject({ needsRelogin: false, lastError: null, refreshToken: "r2" });
+  });
+
   it("throws not_linked with no recipient", async () => {
     await expect(getAccessToken(db, cfg, now, fakeKakao({}).fetch)).rejects.toMatchObject({ problem: "not_linked" });
   });
@@ -239,5 +253,42 @@ describe("sendToMe", () => {
     expect(describeKakaoError(err)).toBe(
       "카카오톡 메시지 동의가 없어요. 다시 연결하고 동의해 주세요. (-402: insufficient scopes)",
     );
+  });
+});
+
+describe("keepAlive", () => {
+  const days = (n: number) => new Date(now.getTime() + n * 86400_000).toISOString();
+
+  it("leaves a refresh token with more than 31 days alone", async () => {
+    await seed({ refreshExpiresAt: days(32) });
+    const { fetch } = fakeKakao({});
+    expect(await keepAlive(db, cfg, now, fetch)).toBe("fresh");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refreshes in the last month so Kakao issues a new refresh token", async () => {
+    await seed({ refreshExpiresAt: days(30) });
+    const { fetch } = fakeKakao({
+      "/oauth/token": () => json({ access_token: "a2", expires_in: 100, refresh_token: "r2", refresh_token_expires_in: 5183999 }),
+    });
+    expect(await keepAlive(db, cfg, now, fetch)).toBe("refreshed");
+    expect(await getLink(db)).toMatchObject({ refreshToken: "r2", refreshExpiresAt: days(5183999 / 86400) });
+  });
+
+  it("logs instead of throwing, and does nothing without a usable link", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await keepAlive(db, cfg, now, fakeKakao({}).fetch)).toBe("none");
+    await seed({ refreshExpiresAt: days(1) });
+    const { fetch } = fakeKakao({ "/oauth/token": () => new Response("down", { status: 503 }) });
+    expect(await keepAlive(db, cfg, now, fetch)).toBe("failed");
+    vi.restoreAllMocks();
+  });
+
+  it("linkExpired covers a refused and an ran-out refresh token", async () => {
+    await seed({ refreshExpiresAt: days(1) });
+    const link = (await getLink(db))!;
+    expect(linkExpired(link, now)).toBe(false);
+    expect(linkExpired(link, new Date(days(1)))).toBe(true);
+    expect(linkExpired({ ...link, needsRelogin: true }, now)).toBe(true);
   });
 });

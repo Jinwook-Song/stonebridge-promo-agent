@@ -2,7 +2,7 @@ import { desc, eq, inArray, sql } from "drizzle-orm";
 import { alertLog, settings } from "../../database/schema";
 import type { Db } from "../server/db";
 import type { Fetch, KakaoConfig, MemoMessage } from "./client.server";
-import { describeKakaoError, getLink, sendToMe } from "./link.server";
+import { describeKakaoError, getLink, keepAlive, sendToMe } from "./link.server";
 import type { AlertKind } from "./types";
 
 /**
@@ -115,6 +115,7 @@ export async function runScheduled(cron: string, now: Date, deps: ScheduledDeps)
   const kind = (Object.keys(CRONS) as AlertKind[]).find((k) => CRONS[k] === cron);
   if (!kind) return "unknown_cron";
   if (!deps.cfg) return "not_configured";
+  if (kind === "order") await keepAlive(deps.db, deps.cfg, now, deps.fetch);
 
   const alerts = await getAlertSettings(deps.db);
   const today = kst(now);
@@ -155,7 +156,12 @@ async function sendOnce(deps: ScheduledDeps, kind: AlertKind, periodKey: string,
     console.error(`kakao ${kind} alert failed`, e);
     return "failed";
   }
-  await db.update(alertLog).set({ status: "sent", sentAt: new Date().toISOString() }).where(eq(alertLog.id, claim.id));
+  try {
+    await db.update(alertLog).set({ status: "sent", sentAt: new Date().toISOString() }).where(eq(alertLog.id, claim.id));
+  } catch (e) {
+    // Delivered; only the log row is stuck at `sending` (shown as 확인 안 됨).
+    console.error(`kakao ${kind} alert sent but not recorded`, e);
+  }
   return "sent";
 }
 
