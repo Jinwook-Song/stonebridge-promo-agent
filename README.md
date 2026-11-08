@@ -41,3 +41,5 @@
 ## 개발
 
 아직 코드가 없습니다. 비밀값(Claude API 키, 카카오 키)은 저장소에 넣지 않고 Cloudflare secret으로만 관리합니다.
+
+배포 순서와 첫 실제 확인: [docs/deploy-checklist.md](docs/deploy-checklist.md)
