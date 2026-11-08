@@ -36,7 +36,10 @@ export const posts = sqliteTable(
     status: text("status", { enum: POST_STATUSES }).notNull(),
     /** Channel currently being rewritten by a single-channel regenerate, if any. */
     rewritingChannel: text("rewriting_channel", { enum: CHANNELS }),
+    /** Instance id of the Workflow that owns the current (or last) generation. */
     workflowId: text("workflow_id"),
+    /** When the current (or last) generation was claimed; a claim older than 40 min is stale. */
+    generationStartedAt: text("generation_started_at"),
     error: text("error"),
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
@@ -60,6 +63,8 @@ export const photos = sqliteTable(
     position: integer("position").notNull(),
     width: integer("width").notNull(),
     height: integer("height").notNull(),
+    /** One-line description from the last full generation (DraftOutput.photos). */
+    note: text("note"),
   },
   (t) => [unique("photos_post_position_unique").on(t.postId, t.position)],
 );

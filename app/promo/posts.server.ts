@@ -29,7 +29,7 @@ export type PostRow = typeof posts.$inferSelect;
 
 export type PostView = {
   post: PostRow;
-  photos: { id: number; position: number; r2Key: string; width: number; height: number }[];
+  photos: { id: number; position: number; r2Key: string; width: number; height: number; note: string | null }[];
   /** Latest version of each channel; null until that channel has a draft. */
   drafts: Record<Channel, DraftRow | null>;
 };
@@ -134,6 +134,7 @@ export async function getPost(db: Db, id: number): Promise<PostView | null> {
         r2Key: photos.r2Key,
         width: photos.width,
         height: photos.height,
+        note: photos.note,
       })
       .from(photos)
       .where(eq(photos.postId, id))

@@ -5,7 +5,9 @@ import type { z } from "zod";
 import { ChannelRewrite, DraftOutput } from "./prompt";
 
 const MODEL = "claude-opus-5-5";
-const MAX_TOKENS = 32000;
+// Thinking counts toward max_tokens on Opus 5.5 (always on, effort high). Streaming, so a large
+// cap is safe; it is a ceiling, not a cost.
+const MAX_TOKENS = 64000;
 // On a policy decline the API re-runs the request on Anthropic's recommended model for that
 // refusal category, inside the same call. The SDK (0.100) does not type `fallbacks` yet; it
 // forwards unknown body fields as-is.
@@ -24,6 +26,27 @@ export class GenerationError extends Error {
   constructor(public readonly reason: GenerationFailure) {
     super(FAILURE_MESSAGES[reason]);
     this.name = "GenerationError";
+  }
+}
+
+/**
+ * API errors that will fail the same way on every retry (bad key, bad request, too large), with
+ * the Korean message to show. null = transient (network, 408, 409, 429, 5xx) or not an API error.
+ */
+export function permanentApiFailure(e: unknown): { message: string } | null {
+  if (!(e instanceof Anthropic.APIError)) return null;
+  switch (e.status) {
+    case 401:
+    case 403:
+      return { message: "AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요." };
+    case 400:
+    case 413:
+    case 422:
+      return { message: "AI가 요청을 처리하지 못했어요. 사진 수를 줄이거나 메모를 바꿔 다시 시도해 주세요." };
+    case 404:
+      return { message: "잠시 후 다시 시도해 주세요." };
+    default:
+      return null;
   }
 }
 

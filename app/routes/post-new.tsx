@@ -44,8 +44,14 @@ export async function action({ request }: Route.ActionArgs) {
       },
       new Date(),
     );
-    // A fresh post is never "generating", and a start failure is recorded on the post itself.
-    await startGeneration(env, getDb(env.DB), id, {});
+    // The post exists now: whatever happens to the start, go to it rather than letting the
+    // owner submit again and create a duplicate. A fresh post is never "generating", and a
+    // failed start is recorded on the post itself.
+    try {
+      await startGeneration(env, getDb(env.DB), id, {});
+    } catch (e) {
+      console.error("startGeneration failed after createPost", { postId: id, error: e });
+    }
     return redirect(`/posts/${id}`);
   } catch (e) {
     if (e instanceof DomainError && (e.code === "INVALID_INPUT" || e.code === "INVALID_FILE")) return { error: e.message };

@@ -1,15 +1,24 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import Anthropic from "@anthropic-ai/sdk";
 import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { drafts, photos, posts } from "../database/schema";
-import { GenerationError, makeFakeClaudeCalls, type DraftCall, type RewriteCall } from "../app/promo/claude.server";
 import {
+  GenerationError,
+  makeFakeClaudeCalls,
+  permanentApiFailure,
+  type DraftCall,
+  type RewriteCall,
+} from "../app/promo/claude.server";
+import {
+  failIfStillGenerating,
+  isFinalAttempt,
   makePhotoSource,
   runGeneration,
   runRewrite,
   startGeneration,
   type GenDeps,
+  type RunRef,
 } from "../app/promo/generate.server";
 import { verifyImageSig } from "../app/promo/image-url";
 import { getPost } from "../app/promo/posts.server";
@@ -44,7 +53,9 @@ function deps(over: Partial<GenDeps> = {}): GenDeps {
   };
 }
 
+const WF = "post-test-workflow";
 let postId: number;
+let run: RunRef;
 
 async function insertPost(status: "draft" | "generating" | "ready" | "failed" = "generating"): Promise<number> {
   const [{ id }] = await db
@@ -55,6 +66,8 @@ async function insertPost(status: "draft" | "generating" | "ready" | "failed" = 
       privateCustomer: false,
       attachPrices: false,
       status,
+      workflowId: WF,
+      generationStartedAt: T0.toISOString(),
       createdAt: T0.toISOString(),
     })
     .returning({ id: posts.id });
@@ -75,11 +88,17 @@ beforeEach(async () => {
   await db.delete(photos);
   await db.delete(posts);
   postId = await insertPost("generating");
+  run = { postId, workflowId: WF };
 });
+
+/** Puts the post back into "generating" under this test's run, as startGeneration would. */
+async function claim(rewritingChannel: "blog" | "instagram" | "daangn" | "place" | null = null) {
+  await db.update(posts).set({ status: "generating", rewritingChannel, workflowId: WF }).where(eq(posts.id, postId));
+}
 
 describe("runGeneration", () => {
   it("saves 4 drafts and marks ready", async () => {
-    await runGeneration(deps(), postId);
+    await runGeneration(deps(), run);
     const v = await getPost(db, postId);
     expect(v!.post.status).toBe("ready");
     expect(v!.post.error).toBeNull();
@@ -97,8 +116,9 @@ describe("runGeneration", () => {
   });
 
   it("adds the next version when run again", async () => {
-    await runGeneration(deps(), postId);
-    await runGeneration(deps(), postId);
+    await runGeneration(deps(), run);
+    await claim();
+    await runGeneration(deps(), run);
     const v = await getPost(db, postId);
     expect(Object.values(v!.drafts).every((d) => d?.version === 2)).toBe(true);
   });
@@ -110,7 +130,7 @@ describe("runGeneration", () => {
           throw new GenerationError("refusal");
         },
       }),
-      postId,
+      run,
     );
     const v = await getPost(db, postId);
     expect(v!.post.status).toBe("failed");
@@ -126,7 +146,7 @@ describe("runGeneration", () => {
             throw new Error("ECONNRESET");
           },
         }),
-        postId,
+        run,
       ),
     ).rejects.toThrow("ECONNRESET");
     const r = await row();
@@ -142,7 +162,7 @@ describe("runGeneration", () => {
             throw new Error("ECONNRESET");
           },
         }),
-        postId,
+        run,
         { final: false },
       ),
     ).rejects.toThrow("ECONNRESET");
@@ -165,7 +185,7 @@ describe("runGeneration", () => {
           return { output: OUT, inputTokens: 1, outputTokens: 1 };
         },
       }),
-      postId,
+      run,
     );
     const images = seen[0].filter((b): b is Anthropic.ImageBlockParam => b.type === "image");
     expect(images.map((b) => b.source)).toEqual([
@@ -175,10 +195,157 @@ describe("runGeneration", () => {
   });
 });
 
+describe("runGeneration ownership and notes", () => {
+  it("stores photo notes by position, ignores out-of-range n, and clears notes it does not mention", async () => {
+    await db.insert(photos).values([
+      { postId, r2Key: `posts/${postId}/1.jpg`, position: 1, width: 1, height: 1 },
+      { postId, r2Key: `posts/${postId}/2.jpg`, position: 2, width: 1, height: 1, note: "이전 설명" },
+    ]);
+    const out = { ...OUT, photos: [{ n: 1, note: "포장한 마카롱" }, { n: 9, note: "없는 사진" }] };
+    await runGeneration(deps({ drafts: async () => ({ output: out, inputTokens: 1, outputTokens: 1 }) }), run);
+    const v = await getPost(db, postId);
+    expect(v!.photos.map((p) => p.note)).toEqual(["포장한 마카롱", null]);
+  });
+
+  it("a rewrite leaves photo notes alone", async () => {
+    await db.insert(photos).values([{ postId, r2Key: `posts/${postId}/1.jpg`, position: 1, width: 1, height: 1 }]);
+    await runGeneration(deps(), run);
+    await claim("blog");
+    await runRewrite(deps(), run, "blog", "");
+    expect((await getPost(db, postId))!.photos[0].note).toBe("포장한 마카롱");
+  });
+
+  it("does nothing (no Claude call) when the post is not generating under this run", async () => {
+    const drafts = vi.fn(okDrafts);
+    await runGeneration(deps({ drafts }), { postId, workflowId: "some-older-run" });
+    await db.update(posts).set({ status: "ready" }).where(eq(posts.id, postId));
+    await runGeneration(deps({ drafts }), run);
+    expect(drafts).not.toHaveBeenCalled();
+    expect((await getPost(db, postId))!.drafts.blog).toBeNull();
+  });
+
+  it("a run superseded while Claude was writing writes nothing", async () => {
+    await db.insert(photos).values([{ postId, r2Key: `posts/${postId}/1.jpg`, position: 1, width: 1, height: 1 }]);
+    const supersede = () => db.update(posts).set({ workflowId: "post-newer-run" }).where(eq(posts.id, postId));
+    await runGeneration(
+      deps({
+        drafts: async () => {
+          await supersede();
+          return { output: OUT, inputTokens: 10, outputTokens: 20 };
+        },
+      }),
+      run,
+    );
+    let v = await getPost(db, postId);
+    expect(Object.values(v!.drafts).every((d) => d === null)).toBe(true);
+    expect(v!.photos[0].note).toBeNull();
+    expect(v!.post).toMatchObject({ status: "generating", workflowId: "post-newer-run", inputTokens: null });
+
+    // Failures of the stale run do not touch the newer one either.
+    await runGeneration(
+      deps({
+        drafts: async () => {
+          throw new GenerationError("refusal");
+        },
+      }),
+      { postId, workflowId: WF },
+    );
+    v = await getPost(db, postId);
+    expect(v!.post).toMatchObject({ status: "generating", error: null });
+  });
+
+  it("a superseded rewrite writes nothing", async () => {
+    await runGeneration(deps(), run);
+    await claim("blog");
+    await runRewrite(
+      deps({
+        rewrite: async () => {
+          await db.update(posts).set({ workflowId: "post-newer-run" }).where(eq(posts.id, postId));
+          return { output: REWRITE, inputTokens: 3, outputTokens: 4 };
+        },
+      }),
+      run,
+      "blog",
+      "",
+    );
+    const v = await getPost(db, postId);
+    expect(v!.drafts.blog!.version).toBe(1);
+    expect(v!.post).toMatchObject({ status: "generating", rewritingChannel: "blog" });
+  });
+
+  it("a permanent API error marks failed with its own reason even on a non-final attempt, and rethrows", async () => {
+    const unauthorized = Anthropic.APIError.generate(401, { type: "error" }, "invalid x-api-key", new Headers());
+    await expect(
+      runGeneration(
+        deps({
+          drafts: async () => {
+            throw unauthorized;
+          },
+        }),
+        run,
+        { final: false },
+      ),
+    ).rejects.toBe(unauthorized);
+    const r = await row();
+    expect(r.status).toBe("failed");
+    expect(r.error).toBe("AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요.");
+  });
+});
+
+describe("failIfStillGenerating", () => {
+  it("fails a post this run still owns (ready for a rewrite)", async () => {
+    await failIfStillGenerating(db, run, false);
+    expect(await row()).toMatchObject({ status: "failed", error: "잠시 후 다시 시도해 주세요." });
+
+    await claim("blog");
+    await failIfStillGenerating(db, run, true);
+    expect(await row()).toMatchObject({ status: "ready", rewritingChannel: null, error: "잠시 후 다시 시도해 주세요." });
+  });
+
+  it("leaves a post alone that is no longer generating or belongs to a newer run", async () => {
+    await failIfStillGenerating(db, { postId, workflowId: "post-older-run" }, false);
+    expect(await row()).toMatchObject({ status: "generating", error: null });
+
+    await db.update(posts).set({ status: "ready" }).where(eq(posts.id, postId));
+    await failIfStillGenerating(db, run, false);
+    expect(await row()).toMatchObject({ status: "ready", error: null });
+  });
+});
+
+describe("isFinalAttempt", () => {
+  it("maps 1-based attempts to the last one", () => {
+    expect([1, 2, 3].map((a) => isFinalAttempt(a, 2))).toEqual([false, false, true]);
+    expect(isFinalAttempt(1, 0)).toBe(true);
+  });
+});
+
+describe("permanentApiFailure", () => {
+  const apiError = (status: number) => Anthropic.APIError.generate(status, { type: "error" }, "x", new Headers());
+
+  it("treats key and request problems as permanent, with Korean reasons", () => {
+    for (const status of [401, 403]) {
+      expect(permanentApiFailure(apiError(status))?.message).toBe("AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요.");
+    }
+    for (const status of [400, 413, 422]) {
+      expect(permanentApiFailure(apiError(status))?.message).toBe(
+        "AI가 요청을 처리하지 못했어요. 사진 수를 줄이거나 메모를 바꿔 다시 시도해 주세요.",
+      );
+    }
+    expect(permanentApiFailure(apiError(404))?.message).toBe("잠시 후 다시 시도해 주세요.");
+  });
+
+  it("leaves timeouts, conflicts, rate limits, server errors and non-API errors to retries", () => {
+    for (const status of [408, 409, 429, 500, 529]) expect(permanentApiFailure(apiError(status))).toBeNull();
+    expect(permanentApiFailure(new Anthropic.APIConnectionError({ message: "reset" }))).toBeNull();
+    expect(permanentApiFailure(new Error("ECONNRESET"))).toBeNull();
+    expect(permanentApiFailure(new GenerationError("refusal"))).toBeNull();
+  });
+});
+
 describe("runRewrite", () => {
   it("adds version 2 for one channel only", async () => {
-    await runGeneration(deps(), postId);
-    await db.update(posts).set({ status: "generating", rewritingChannel: "blog" }).where(eq(posts.id, postId));
+    await runGeneration(deps(), run);
+    await claim("blog");
 
     let user: Anthropic.ContentBlockParam[] = [];
     await runRewrite(
@@ -188,7 +355,7 @@ describe("runRewrite", () => {
           return { output: REWRITE, inputTokens: 3, outputTokens: 4 };
         },
       }),
-      postId,
+      run,
       "blog",
       "더 짧게",
     );
@@ -214,7 +381,8 @@ describe("runRewrite", () => {
   });
 
   it("uses a default request when the instruction is empty", async () => {
-    await runGeneration(deps(), postId);
+    await runGeneration(deps(), run);
+    await claim("place");
     let user: Anthropic.ContentBlockParam[] = [];
     await runRewrite(
       deps({
@@ -223,7 +391,7 @@ describe("runRewrite", () => {
           return { output: REWRITE, inputTokens: 1, outputTokens: 1 };
         },
       }),
-      postId,
+      run,
       "place",
       "  ",
     );
@@ -234,15 +402,15 @@ describe("runRewrite", () => {
   });
 
   it("on refusal keeps the drafts, goes back to ready with the reason, clears the rewriting channel", async () => {
-    await runGeneration(deps(), postId);
-    await db.update(posts).set({ status: "generating", rewritingChannel: "instagram" }).where(eq(posts.id, postId));
+    await runGeneration(deps(), run);
+    await claim("instagram");
     await runRewrite(
       deps({
         rewrite: async () => {
           throw new GenerationError("refusal");
         },
       }),
-      postId,
+      run,
       "instagram",
       "",
     );
@@ -254,8 +422,8 @@ describe("runRewrite", () => {
   });
 
   it("transient error on the final attempt clears the rewriting channel and rethrows", async () => {
-    await runGeneration(deps(), postId);
-    await db.update(posts).set({ status: "generating", rewritingChannel: "daangn" }).where(eq(posts.id, postId));
+    await runGeneration(deps(), run);
+    await claim("daangn");
     await expect(
       runRewrite(
         deps({
@@ -263,7 +431,7 @@ describe("runRewrite", () => {
             throw new Error("socket hang up");
           },
         }),
-        postId,
+        run,
         "daangn",
         "",
       ),
@@ -333,6 +501,33 @@ describe("startGeneration", () => {
     expect(r.status).toBe("ready");
     expect(r.rewritingChannel).toBeNull();
     expect(r.error).toMatch(/[가-힣]/);
+  });
+
+  it("stores the instance id on the post before creating the instance", async () => {
+    const id = await insertPost("draft");
+    const create = vi.fn(async ({ id: instanceId }: { id?: string }) => {
+      expect((await row(id)).workflowId).toBe(instanceId);
+      return { id: instanceId };
+    });
+    await startGeneration(fakeEnv(create), db, id, {}, T0);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(await row(id)).toMatchObject({ workflowId: `post-${id}-${T0.getTime()}`, generationStartedAt: T0.toISOString() });
+  });
+
+  it("takes over a claim older than 40 minutes, not a younger one", async () => {
+    const id = await insertPost("draft");
+    const e = fakeEnv();
+    const after = (min: number) => new Date(T0.getTime() + min * 60_000);
+    await startGeneration(e, db, id, {}, T0);
+    await expect(startGeneration(e, db, id, {}, after(39))).rejects.toThrow("이미 만드는 중");
+    await startGeneration(e, db, id, { channel: "blog" }, after(41));
+    expect(e.GENERATE.create).toHaveBeenCalledTimes(2);
+    expect(await row(id)).toMatchObject({
+      status: "generating",
+      rewritingChannel: "blog",
+      workflowId: `post-${id}-${after(41).getTime()}`,
+      generationStartedAt: after(41).toISOString(),
+    });
   });
 
   it("throws NOT_FOUND for a missing post", async () => {

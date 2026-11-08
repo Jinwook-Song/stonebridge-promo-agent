@@ -1,14 +1,21 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { and, eq, max, ne, sql } from "drizzle-orm";
-import { drafts, posts } from "../../database/schema";
+import { and, eq, exists, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { drafts, photos, posts } from "../../database/schema";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
-import { GenerationError, makeClaudeCalls, makeFakeClaudeCalls, type DraftCall, type RewriteCall } from "./claude.server";
+import {
+  GenerationError,
+  makeClaudeCalls,
+  makeFakeClaudeCalls,
+  permanentApiFailure,
+  type DraftCall,
+  type RewriteCall,
+} from "./claude.server";
 import { signImageUrl } from "./image-url";
-import { getPost } from "./posts.server";
+import { getPost, type PostView } from "./posts.server";
 import { buildSystem, buildUserContent, pickExampleSet, type ImageSource } from "./prompt";
 import { getSettings } from "./settings.server";
-import { CHANNEL_LABELS, CHANNELS, type Channel } from "./types";
+import { CHANNEL_LABELS, type Channel } from "./types";
 
 /** Workflow instance params (workers/generate-workflow.ts). No channel = all four channels. */
 export type GenerateParams = { postId: number; channel?: Channel; instruction?: string };
@@ -23,62 +30,70 @@ export type GenDeps = {
 };
 
 /**
+ * One generation run: the post plus the Workflow instance that claimed it (startGeneration
+ * stores the instance id as posts.workflow_id). Every write is conditional on the post still
+ * being "generating" under this id, so a late or superseded run cannot overwrite a newer one.
+ */
+export type RunRef = { postId: number; workflowId: string };
+
+/**
  * `final: false` is for a Workflow attempt that will be retried: a transient error then leaves
  * the post "generating" (so 다시 시도 stays blocked while the retry is pending) instead of
  * showing a failure that the retry may still fix.
  */
 export type RunOptions = { final?: boolean };
 
+/** Workflow attempts are 1-based: with `limit` retries, attempt limit+1 is the last one. */
+export function isFinalAttempt(attempt: number, retryLimit: number): boolean {
+  return attempt > retryLimit;
+}
+
 const RETRY_LATER = "잠시 후 다시 시도해 주세요.";
 const START_FAILED = "초안 만들기를 시작하지 못했어요. 잠시 후 다시 시도해 주세요.";
+/** Longer than a whole Workflow run can take (3 attempts x 10 min timeout + retry delays). */
+const STALE_CLAIM_MS = 40 * 60 * 1000;
 
 // ---- Runners (called inside the Workflow step) ----------------------------
 
-export async function runGeneration(deps: GenDeps, postId: number, opts: RunOptions = {}): Promise<void> {
+export async function runGeneration(deps: GenDeps, run: RunRef, opts: RunOptions = {}): Promise<void> {
   const { db } = deps;
   try {
-    const { view, system, user } = await prepare(deps, postId);
+    const view = await ownedPost(db, run);
+    if (!view) return;
+    const { system, user } = await prepare(deps, view);
     const { output, inputTokens, outputTokens } = await deps.drafts({ system, user });
 
     const at = deps.now().toISOString();
-    const next = await nextVersions(db, postId);
-    const row = (channel: Channel, title: string | null, body: string, hashtags: string | null = null) => ({
-      postId: view.post.id,
-      channel,
-      version: next[channel],
-      title,
-      body,
-      hashtags,
-      source: "ai" as const,
-      createdAt: at,
-    });
+    const draft = (channel: Channel, title: string | null, body: string, hashtags: string | null = null) =>
+      insertDraftIfOwned(db, run, { channel, title, body, hashtags, createdAt: at });
     await db.batch([
-      db.insert(drafts).values([
-        row("blog", output.blog.title, output.blog.body),
-        row("instagram", null, output.instagram.body, hashtagsJson(output.instagram.hashtags)),
-        row("daangn", output.daangn.title, output.daangn.body),
-        row("place", null, output.place.body),
-      ]),
+      draft("blog", output.blog.title, output.blog.body),
+      draft("instagram", null, output.instagram.body, hashtagsJson(output.instagram.hashtags)),
+      draft("daangn", output.daangn.title, output.daangn.body),
+      draft("place", null, output.place.body),
+      setPhotoNotesIfOwned(db, run, output.photos),
       db
         .update(posts)
         .set({ status: "ready", rewritingChannel: null, error: null, generatedAt: at, inputTokens, outputTokens })
-        .where(eq(posts.id, postId)),
+        .where(owned(run)),
     ]);
   } catch (e) {
-    await handleFailure(db, postId, "failed", e, opts);
+    await handleFailure(db, run, "failed", e, opts);
   }
 }
 
 export async function runRewrite(
   deps: GenDeps,
-  postId: number,
+  run: RunRef,
   channel: Channel,
   instruction: string,
   opts: RunOptions = {},
 ): Promise<void> {
   const { db } = deps;
   try {
-    const { view, system, user } = await prepare(deps, postId);
+    const view = await ownedPost(db, run);
+    if (!view) return;
+    const { system, user } = await prepare(deps, view);
     const current = view.drafts[channel];
     const currentText = [
       current?.title ? `제목: ${current.title}` : null,
@@ -96,17 +111,13 @@ export async function runRewrite(
       user: [...user, { type: "text", text: ask }],
     });
 
-    const next = await nextVersions(db, postId);
     await db.batch([
-      db.insert(drafts).values({
-        postId,
+      insertDraftIfOwned(db, run, {
         channel,
-        version: next[channel],
         // Keep only the parts this channel has.
         title: channel === "blog" || channel === "daangn" ? (output.title ?? current?.title ?? null) : null,
         body: output.body,
         hashtags: channel === "instagram" ? hashtagsJson(output.hashtags ?? []) : null,
-        source: "ai",
         createdAt: deps.now().toISOString(),
       }),
       db
@@ -118,17 +129,73 @@ export async function runRewrite(
           inputTokens: sql`coalesce(${posts.inputTokens}, 0) + ${inputTokens}`,
           outputTokens: sql`coalesce(${posts.outputTokens}, 0) + ${outputTokens}`,
         })
-        .where(eq(posts.id, postId)),
+        .where(owned(run)),
     ]);
   } catch (e) {
     // The other drafts are still there, so a failed rewrite goes back to "ready" with the reason.
-    await handleFailure(db, postId, "ready", e, opts);
+    await handleFailure(db, run, "ready", e, opts);
   }
 }
 
-async function prepare(deps: GenDeps, postId: number) {
-  const view = await getPost(deps.db, postId);
-  if (!view) throw new DomainError("NOT_FOUND", "글을 찾을 수 없어요.");
+function owned(run: RunRef) {
+  return and(eq(posts.id, run.postId), eq(posts.workflowId, run.workflowId), eq(posts.status, "generating"));
+}
+
+/**
+ * The post, if this run still owns it. A retried step whose earlier attempt already finished,
+ * or a run superseded by a newer one, gets null and does nothing (no Claude call).
+ */
+async function ownedPost(db: Db, run: RunRef) {
+  const view = await getPost(db, run.postId);
+  if (view && view.post.status === "generating" && view.post.workflowId === run.workflowId) return view;
+  console.warn("generation run no longer owns the post, skipping", run);
+  return null;
+}
+
+/** Next version for the channel; inserts nothing unless the run still owns the post. */
+function insertDraftIfOwned(
+  db: Db,
+  run: RunRef,
+  d: { channel: Channel; title: string | null; body: string; hashtags: string | null; createdAt: string },
+) {
+  const nextVersion = sql<number>`(SELECT coalesce(max(${drafts.version}), 0) + 1 FROM ${drafts}
+    WHERE ${drafts.postId} = ${run.postId} AND ${drafts.channel} = ${d.channel})`;
+  // insert…select needs every column, in table order. id NULL = next rowid.
+  return db.insert(drafts).select(
+    db
+      .select({
+        id: sql<number>`NULL`.as("id"),
+        postId: posts.id,
+        channel: sql<Channel>`${d.channel}`.as("channel"),
+        version: nextVersion.as("version"),
+        title: sql<string | null>`${d.title}`.as("title"),
+        body: sql<string>`${d.body}`.as("body"),
+        hashtags: sql<string | null>`${d.hashtags}`.as("hashtags"),
+        source: sql<"ai">`'ai'`.as("source"),
+        confirmedAt: sql<string | null>`NULL`.as("confirmed_at"),
+        editRatio: sql<number | null>`NULL`.as("edit_ratio"),
+        createdAt: sql<string>`${d.createdAt}`.as("created_at"),
+      })
+      .from(posts)
+      .where(owned(run)),
+  );
+}
+
+/**
+ * Replaces every photo's note with this generation's (n is the 1-based position). Notes for
+ * positions that do not exist are ignored; photos without a note get NULL.
+ */
+function setPhotoNotesIfOwned(db: Db, run: RunRef, notes: { n: number; note: string }[]) {
+  const cases = notes.map(({ n, note }) => sql`WHEN ${n} THEN ${note}`);
+  const note =
+    cases.length > 0 ? sql<string | null>`CASE ${photos.position} ${sql.join(cases, sql` `)} ELSE NULL END` : null;
+  return db
+    .update(photos)
+    .set({ note })
+    .where(and(eq(photos.postId, run.postId), exists(db.select({ one: sql`1` }).from(posts).where(owned(run)))));
+}
+
+async function prepare(deps: GenDeps, view: PostView) {
   const [settings, examples, sources] = await Promise.all([
     getSettings(deps.db),
     pickExampleSet(deps.db, view.post.kind),
@@ -137,54 +204,44 @@ async function prepare(deps: GenDeps, postId: number) {
   ]);
   const system = buildSystem(settings, examples);
   const user: Anthropic.ContentBlockParam[] = buildUserContent(view.post, sources);
-  return { view, system, user };
+  return { system, user };
 }
 
 /**
  * GenerationError: final — record the reason and return, so the Workflow does not retry.
+ * Permanent API error (bad key, bad request): record its reason now and rethrow; the Workflow
+ * turns it into a NonRetryableError.
  * Anything else: record a generic reason on the last attempt, then rethrow so the Workflow
  * step retries it (or ends errored).
  */
 async function handleFailure(
   db: Db,
-  postId: number,
+  run: RunRef,
   status: "failed" | "ready",
   e: unknown,
   opts: RunOptions,
 ): Promise<void> {
   if (e instanceof GenerationError) {
-    await markFailed(db, postId, status, e.message);
+    await markFailed(db, run, status, e.message);
     return;
   }
-  console.error("generation failed", { postId, error: e });
-  if (opts.final !== false) await markFailed(db, postId, status, RETRY_LATER);
+  console.error("generation failed", { ...run, error: e });
+  const permanent = permanentApiFailure(e);
+  if (permanent) await markFailed(db, run, status, permanent.message);
+  else if (opts.final !== false) await markFailed(db, run, status, RETRY_LATER);
   throw e;
 }
 
-async function markFailed(db: Db, postId: number, status: "failed" | "ready", message: string): Promise<void> {
-  await db.update(posts).set({ status, error: message, rewritingChannel: null }).where(eq(posts.id, postId));
+async function markFailed(db: Db, run: RunRef, status: "failed" | "ready", message: string): Promise<void> {
+  await db.update(posts).set({ status, error: message, rewritingChannel: null }).where(owned(run));
 }
 
 /**
- * Last resort for the Workflow (step timed out or every retry failed): if the post is still
- * "generating", show the failure so it is not stuck behind a spinner.
+ * Last resort for the Workflow (step timed out or every retry failed): if this run still owns
+ * the post, show the failure so it is not stuck behind a spinner.
  */
-export async function failIfStillGenerating(db: Db, postId: number, rewrite: boolean): Promise<void> {
-  await db
-    .update(posts)
-    .set({ status: rewrite ? "ready" : "failed", error: RETRY_LATER, rewritingChannel: null })
-    .where(and(eq(posts.id, postId), eq(posts.status, "generating")));
-}
-
-async function nextVersions(db: Db, postId: number): Promise<Record<Channel, number>> {
-  const rows = await db
-    .select({ channel: drafts.channel, version: max(drafts.version) })
-    .from(drafts)
-    .where(eq(drafts.postId, postId))
-    .groupBy(drafts.channel);
-  const next = Object.fromEntries(CHANNELS.map((c) => [c, 1])) as Record<Channel, number>;
-  for (const r of rows) next[r.channel] = (r.version ?? 0) + 1;
-  return next;
+export async function failIfStillGenerating(db: Db, run: RunRef, rewrite: boolean): Promise<void> {
+  await markFailed(db, run, rewrite ? "ready" : "failed", RETRY_LATER);
 }
 
 function hashtagsJson(tags: string[]): string {
@@ -194,21 +251,40 @@ function hashtagsJson(tags: string[]): string {
 // ---- Start (called from route actions) ------------------------------------
 
 /**
- * Marks the post "generating" and starts the Workflow. One SQL statement claims the post, so a
- * double tap cannot start two runs. If the Workflow cannot be created, the post is put back
- * (failed, or ready for a rewrite) with a Korean reason instead of throwing, so the caller can
- * just go on to the post page.
+ * Marks the post "generating" under a new Workflow instance id and starts that instance. One SQL
+ * statement claims the post, so a double tap cannot start two runs; a claim older than 40 min
+ * is treated as dead and can be taken over. If the Workflow cannot be created, the post is put
+ * back (failed, or ready for a rewrite) with a Korean reason instead of throwing, so the caller
+ * can just go on to the post page.
  */
 export async function startGeneration(
   env: Pick<Env, "GENERATE">,
   db: Db,
   postId: number,
   job: { channel?: Channel; instruction?: string },
+  now: Date = new Date(),
 ): Promise<void> {
+  const run: RunRef = { postId, workflowId: `post-${postId}-${now.getTime()}` };
+  const staleBefore = new Date(now.getTime() - STALE_CLAIM_MS).toISOString();
   const claimed = await db
     .update(posts)
-    .set({ status: "generating", rewritingChannel: job.channel ?? null, error: null })
-    .where(and(eq(posts.id, postId), ne(posts.status, "generating")))
+    .set({
+      status: "generating",
+      rewritingChannel: job.channel ?? null,
+      error: null,
+      workflowId: run.workflowId,
+      generationStartedAt: now.toISOString(),
+    })
+    .where(
+      and(
+        eq(posts.id, postId),
+        or(
+          ne(posts.status, "generating"),
+          isNull(posts.generationStartedAt),
+          lt(posts.generationStartedAt, staleBefore),
+        ),
+      ),
+    )
     .returning({ id: posts.id });
   if (claimed.length === 0) {
     const [exists] = await db.select({ id: posts.id }).from(posts).where(eq(posts.id, postId));
@@ -216,16 +292,13 @@ export async function startGeneration(
     throw new DomainError("BUSY", "이미 만드는 중이에요.");
   }
 
-  const id = `post-${postId}-${Date.now()}`;
   const params: GenerateParams = { postId, ...job };
   try {
-    await env.GENERATE.create({ id, params });
+    await env.GENERATE.create({ id: run.workflowId, params });
   } catch (e) {
-    console.error("could not start generation workflow", { postId, error: e });
-    await markFailed(db, postId, job.channel ? "ready" : "failed", START_FAILED);
-    return;
+    console.error("could not start generation workflow", { ...run, error: e });
+    await markFailed(db, run, job.channel ? "ready" : "failed", START_FAILED);
   }
-  await db.update(posts).set({ workflowId: id }).where(eq(posts.id, postId));
 }
 
 // ---- Real dependencies ----------------------------------------------------
