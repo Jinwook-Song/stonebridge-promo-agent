@@ -42,7 +42,7 @@
 - Test: `test/schema.test.ts`
 
 **Interfaces:**
-- Produces: `getDb(d1: D1Database): Db`, `withD1Session` (as cafe-manager); `DomainError(code, message)`; tables below; types `Channel`, `PostKind`, `PostStatus = "generating" | "ready" | "failed"`, `CHANNELS: readonly Channel[]` in order blog, instagram, daangn, place.
+- Produces: `getDb(d1: D1Database): Db`, `withD1Session` (as cafe-manager); `DomainError(code, message)`; tables below; types `Channel`, `PostKind`, `PostStatus = "draft" | "generating" | "ready" | "failed"`, `CHANNELS: readonly Channel[]` in order blog, instagram, daangn, place.
 
 Tables (`database/schema.ts`, sqlite, ISO-string timestamps like cafe-manager):
 - `settings(key text pk, value text not null)`
@@ -95,7 +95,7 @@ it("stores a post with photos and drafts", async () => {
 ### Task 3: Settings and examples store
 
 **Files:**
-- Create: `app/promo/default-rules.ts`, `app/promo/settings.server.ts`, `app/promo/examples.server.ts`, `app/routes/settings.tsx`, `drizzle/0001_placeholder_settings.sql`
+- Create: `app/promo/default-rules.ts`, `app/promo/settings.server.ts`, `app/promo/examples.server.ts`, `app/routes/settings.tsx`
 - Test: `test/settings.test.ts`, `test/examples.test.ts`
 
 **Interfaces:**
@@ -107,7 +107,7 @@ it("stores a post with photos and drafts", async () => {
   - `pickExamples(db: Db, channel: Channel, kind: PostKind, limit: number): Promise<Example[]>` — enabled only; order: `owner_final` before `blog_import`, same `kind` before other kinds, newest first.
   - `addExample(db, ex: Omit<Example,"id"> & { sourceUrl?: string }, now: Date): Promise<number>`; `setExampleEnabled(db, id, enabled)`; `listExamples(db): Promise<(Example & {enabled:boolean})[]>`.
 - `DEFAULT_VOICE_RULES` / `DEFAULT_CHANNEL_RULES`: spec §5.7 text verbatim (공통 + 블로그 + 인스타/당근/플레이스). These are style rules, not owner data — fine in repo.
-- `0001_placeholder_settings.sql`: insert `footer_blog = '(설정에서 블로그 꼬리말을 입력하세요)'` etc.? **No** — leave footers unset; the settings page shows an amber "아직 비어 있음" note. Migration only exists if needed; skip it if empty.
+- No seed migration: footers/prices stay unset until the owner fills them; the settings page shows an amber `아직 비어 있음` note on empty fields.
 
 - [ ] **Step 1: Tests**
 
@@ -184,7 +184,7 @@ it.each([
 ### Task 5: Posts, photo upload, signed image URLs
 
 **Files:**
-- Create: `app/promo/image-url.ts`, `app/promo/posts.server.ts`, `app/promo/resize-image.client.ts`, `app/routes/img.ts` (route `img/:key{.+}`? use `img/*` splat), `app/routes/post-new.tsx`
+- Create: `app/promo/image-url.ts`, `app/promo/posts.server.ts`, `app/promo/resize-image.client.ts`, `app/routes/img.ts` (route `img/*`, key = splat param), `app/routes/post-new.tsx`
 - Test: `test/image-url.test.ts`, `test/posts.test.ts`
 
 **Interfaces:**
@@ -192,7 +192,7 @@ it.each([
   - `signImageUrl(origin: string, key: string, secret: string, now: Date, ttlSec = 600): Promise<string>` → `${origin}/img/${key}?exp=<unix>&sig=<base64url HMAC-SHA256 of "key\nexp">`
   - `verifyImageSig(key: string, exp: string, sig: string, secret: string, now: Date): Promise<boolean>` (constant-time compare via `crypto.subtle.verify`)
   - `type NewPostInput = { kind: PostKind; memo: string; privateCustomer: boolean; attachPrices: boolean; photos: File[] }`
-  - `createPost(db: Db, bucket: R2Bucket, input: NewPostInput, now: Date): Promise<number>` — memo trimmed 1..500 chars; photos 0..8; type in jpeg/png/webp; size ≤ 5 MB; else `DomainError("INVALID_INPUT", <Korean message>)`. R2 key `posts/<postId>/<position>.jpg` (position 1-based, upload order). Width/height from form fields `photoWidth[]`/`photoHeight[]` sent by the client (0 if missing). Status starts `"ready"` with zero drafts? **No:** status starts `"generating"` and the route calls `startGeneration` (Task 7) right after; until Task 7 lands, route only creates.
+  - `createPost(db: Db, bucket: R2Bucket, input: NewPostInput, now: Date): Promise<number>` — memo trimmed 1..500 chars; photos 0..8; type in jpeg/png/webp; size ≤ 5 MB; else `DomainError("INVALID_INPUT", <Korean message>)`. R2 key `posts/<postId>/<position>.jpg` (position 1-based, upload order). Width/height from form fields `photoWidth[]`/`photoHeight[]` sent by the client (0 if missing). Status starts `"draft"`; the route calls `startGeneration` (Task 7) right after creating. Until Task 7 lands, the route only creates and redirects to `/posts/:id`.
   - `getPost(db, id): Promise<PostView | null>` where `PostView = { post; photos: {id, position, r2Key, width, height}[]; drafts: Record<Channel, DraftRow | null> /* latest version each */ }`
   - `listPosts(db, limit = 50)` newest first with first 40 chars of memo + status.
 - `/img/*` route: allow if `verifyImageSig` passes **or** owner session valid; stream `PHOTOS.get(key)` with `Content-Type: image/jpeg`, `Cache-Control: private, max-age=600`; 404 if missing, 403 otherwise.
@@ -252,7 +252,7 @@ it("createPost allows zero photos", async () => { /* resolves to a number */ });
     - instagram: body, footerShort, hashtags as `#a #b` (strip leading `#` from input, dedupe)
     - daangn: body, (attachPrices ? priceTable : ""), footerShort
     - place: body
-  - `findUnsupportedNumbers(text: string, sources: string[]): string[]` — tokens matching `/\d[\d,]*(?:\.\d+)?\s?(?:원|구|세트|인분|개|명|시|분|일|월|%)?/g`, ignoring those inside `[사진 N]`; normalize by removing `,` and whitespace; supported if the normalized digits appear as a digit run in any normalized source (digits-only compare, so `20,500` ≈ `20500원`). Returns original tokens, deduped, in order.
+  - `findUnsupportedNumbers(text: string, sources: string[]): string[]` — tokens matching `/\d[\d,]*(?:\.\d+)?\s?(?:원|구|세트|인분|개|명|시|분|일|월|%)?/g`, ignoring those inside `[사진 N]`; normalize by removing `,` and whitespace; supported if its digit run (commas removed) equals some digit run in the sources (commas removed) — exact run match, not substring, so `20,500` ≈ `20500원` but `0` is not supported by `70`. Returns original tokens, deduped, in order.
   - `findPossibleNames(text: string): string[]` — `/([가-힣]{2,3})\s?(님|씨)/g`, excluding `사장|손님|고객|선생|여러분|담당자|직원|원장|부장|팀장|과장|대리`.
 
 - [ ] **Step 1: Tests**
@@ -310,7 +310,7 @@ it("names flagged except role words", () => {
 **Interfaces:**
 - Consumes: Task 3 `getSettings`, Task 5 `getPost`, `signImageUrl`, Task 6 everything.
 - Produces:
-  - `class GenerationError extends Error { reason: "refusal" | "max_tokens" | "invalid_output" | "api" }` with Korean `message` (e.g. refusal → `AI가 이 요청을 거절했어요. 메모를 바꿔 다시 시도해 주세요.`).
+  - `class GenerationError extends Error { constructor(reason: "refusal" | "max_tokens" | "invalid_output"); reason }` — `message` is a fixed Korean string per reason (e.g. refusal → `AI가 이 요청을 거절했어요. 메모를 바꿔 다시 시도해 주세요.`).
   - `type DraftCall = (req: { system: string; user: Anthropic.ContentBlockParam[] }) => Promise<{ output: DraftOutput; inputTokens: number; outputTokens: number }>`
   - `type RewriteCall = (req: { system: string; user: Anthropic.ContentBlockParam[] }) => Promise<{ output: ChannelRewrite; inputTokens: number; outputTokens: number }>`
   - `makeClaudeCalls(apiKey: string): { drafts: DraftCall; rewrite: RewriteCall }` — `client.beta.messages.stream({ model: "claude-opus-5-5", max_tokens: 32000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default", output_config: { effort: "high", format: zodOutputFormat(Schema) }, system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: user }] })` → `finalMessage()`; check `stop_reason` (`refusal`, `max_tokens`) before reading; take the text block, `JSON.parse` + `Schema.safeParse`; failures → `GenerationError`. If the SDK's beta stream typing rejects `output_config.format` with a zod helper, pass the JSON schema object (`{ type: "json_schema", schema: z.toJSONSchema(Schema) }`) — let the compiler decide.
@@ -413,7 +413,7 @@ it("confirmDraft stores ratio against first ai version and adds one example", as
 
 - [ ] **Step 1: Create resources** (needs the user's Cloudflare login; ask before running if not already authorized): `npx wrangler d1 create promo-agent`, `npx wrangler r2 bucket create promo-photos`, put id in `wrangler.jsonc`; `npx wrangler d1 migrations apply promo-agent --remote`; `npx wrangler d1 execute promo-agent --remote --file private/seed-examples.sql`; `wrangler secret put` × 4.
 - [ ] **Step 2: Deploy** `npm run deploy`; open the workers.dev URL on a phone-sized viewport; run the Task 8 manual check once against production.
-- [ ] **Step 3: Settings** — enter real footer/price table from the public blog (source: spec §"고정 꼬리말" notes in cafe-manager branch `worktree-ax-challenge-day1`, file `docs/ax-challenge/promo-voice-notes.md`) through the settings page, not git.
+- [ ] **Step 3: Settings** — enter the real footer and price table (copy from the owner's public blog posts; a transcription exists in the private cafe-manager notes `docs/ax-challenge/promo-voice-notes.md`) through the settings page, never git.
 - [ ] **Step 4: Backtest** two posts (one case, one product); read the outputs; note voice gaps in `private/backtest/notes.md`.
 - [ ] **Step 5: README** — update 지금 되는 것 / 아직 안 되는 것 to match what shipped; add 개발 section (`npm install`, `.dev.vars` names, `npm run dev`, `npx tsx scripts/import-blog.ts`, `npm test`); add one screenshot of the result screen with **dummy** content only.
 - [ ] **Step 6: Commit** `chore: deploy config, backtest script, README for Day 4`
