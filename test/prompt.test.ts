@@ -32,7 +32,8 @@ const ex = (id: number, channel: Example["channel"], kind: Example["kind"], titl
 });
 
 const EX = {
-  blog: [ex(1, "blog", "case", "[장소] 단체 주문"), ex(2, "blog", "product", "시즌 상품")],
+  // Deliberately not in id / kind / title order: buildSystem must keep the given order.
+  blog: [ex(9, "blog", "product", "시즌 상품"), ex(2, "blog", "case", "[장소] 단체 주문")],
   instagram: [ex(3, "instagram", "other", null)],
   daangn: [ex(4, "daangn", "product", "이웃 소식")],
   place: [],
@@ -69,6 +70,20 @@ describe("buildUserContent", () => {
     expect(c[1]).toEqual({ type: "image", source: src });
   });
 
+  it("one photo names just [사진 1]", () => {
+    const last = JSON.stringify(buildUserContent(base, [urlSrc("https://x/a")]).at(-1));
+    expect(last).toContain("블로그 본문에 [사진 1] 위치를 표시하세요.");
+    expect(last).not.toContain("~");
+  });
+
+  it("tells the model a price table follows only when attachPrices is on", () => {
+    const on = JSON.stringify(buildUserContent({ ...base, attachPrices: true }, []).at(-1));
+    const off = JSON.stringify(buildUserContent({ ...base, attachPrices: false }, []).at(-1));
+    expect(on).toContain("가격표가 따로 붙습니다");
+    expect(on).toContain("가격은 아래를 참고해 주세요");
+    expect(off).not.toContain("가격표");
+  });
+
   it("states kind and private-customer flag in Korean", () => {
     const last = JSON.stringify(
       buildUserContent({ ...base, kind: "case", privateCustomer: true }, []).at(-1),
@@ -92,10 +107,24 @@ describe("buildSystem", () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(out).toContain("VOICE-RULES-MARK");
     expect(out).toContain("CHANNEL-RULES-MARK");
-    expect(out).toContain("### 블로그 예시 1 (단체 주문 사례)");
-    expect(at("### 블로그 예시 2 (상품·시즌)")).toBeGreaterThan(at("### 블로그 예시 1"));
-    expect(out).toContain("### 인스타그램 예시 1");
+    expect(at("### 블로그 예시 1 (상품·시즌 안내)")).toBeGreaterThan(0);
+    expect(at("### 블로그 예시 2 (단체 주문 사례)")).toBeGreaterThan(at("### 블로그 예시 1"));
+    expect(at("시즌 상품")).toBeLessThan(at("[장소] 단체 주문"));
+    expect(at("본문 9")).toBeLessThan(at("본문 2"));
+    expect(out).toContain("### 인스타 예시 1");
     expect(out).toContain("[장소] 단체 주문");
+  });
+
+  it("says examples are for voice only, when examples exist", () => {
+    const note = "예시 글은 말투와 구성만 참고한다. 예시 속 숫자·가격·기관 이름·사실은 이번 글에 가져오지 않는다.";
+    expect(buildSystem(S, EX)).toContain(note);
+    expect(buildSystem(S, { blog: [], instagram: [], daangn: [], place: [] })).not.toContain("## 예시 글");
+  });
+
+  it("bans ad copy and long sentences, and avoids marketing framing", () => {
+    const out = buildSystem(S, EX);
+    expect(out).toContain('광고 문구("~해 보세요!", "놓치지 마세요"), 과한 칭찬, 긴 문장은 쓰지 않는다. 한 줄에 한 문장, 짧게.');
+    expect(out).not.toContain("마케팅");
   });
 
   it("states the owner voice and the no-fixed-text rules", () => {

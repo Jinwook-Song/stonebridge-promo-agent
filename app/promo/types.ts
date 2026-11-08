@@ -17,3 +17,17 @@ export type ExampleSource = (typeof EXAMPLE_SOURCES)[number];
 export const MAX_PHOTOS = 8;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 export const MAX_MEMO_CHARS = 500;
+
+/** Display labels, shared by the UI and the prompt. Keep this file free of server-only imports. */
+export const KIND_LABELS: Record<PostKind, string> = {
+  case: "단체 주문 사례",
+  product: "상품·시즌 안내",
+  other: "기타",
+};
+
+export const CHANNEL_LABELS: Record<Channel, string> = {
+  blog: "블로그",
+  instagram: "인스타",
+  daangn: "당근",
+  place: "플레이스",
+};

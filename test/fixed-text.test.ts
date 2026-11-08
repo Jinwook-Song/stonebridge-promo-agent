@@ -52,6 +52,12 @@ describe("withFixedText", () => {
     expect(withFixedText("instagram", { body: "b", hashtags: null }, { ...S, footerShort: "" }, false)).toBe("b");
   });
 
+  it("instagram hashtags lose inner spaces", () => {
+    expect(
+      withFixedText("instagram", { body: "b", hashtags: ["구리 카페", "# 단체 주문"] }, { ...S, footerShort: "" }, false),
+    ).toBe("b\n\n#구리카페 #단체주문");
+  });
+
   it("place never gets footer or prices", () => {
     expect(withFixedText("place", { body: "본문", hashtags: ["a"] }, S, true)).toBe("본문");
   });

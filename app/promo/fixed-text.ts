@@ -7,7 +7,7 @@ import type { Channel } from "./types";
 function normalizeHashtags(tags: string[] | null | undefined): string {
   const seen = new Set<string>();
   for (const raw of tags ?? []) {
-    const tag = raw.trim().replace(/^#+/, "").trim();
+    const tag = raw.replace(/\s+/g, "").replace(/^#+/, "");
     if (tag) seen.add(tag);
   }
   return [...seen].map((tag) => `#${tag}`).join(" ");

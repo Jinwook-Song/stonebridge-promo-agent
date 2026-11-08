@@ -15,22 +15,9 @@ import {
   type ExampleRow,
 } from "../promo/examples.server";
 import { getSettings, saveSettings } from "../promo/settings.server";
-import { POST_KINDS, type Channel, type PostKind } from "../promo/types";
+import { CHANNEL_LABELS, KIND_LABELS, POST_KINDS, type Channel, type PostKind } from "../promo/types";
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
-
-const CHANNEL_LABELS: Record<Channel, string> = {
-  blog: "블로그",
-  instagram: "인스타",
-  daangn: "당근",
-  place: "플레이스",
-};
-
-const KIND_LABELS: Record<PostKind, string> = {
-  case: "단체 주문 사례",
-  product: "상품·시즌 안내",
-  other: "기타",
-};
 
 type ActionResult = { ok?: boolean; error?: string } | undefined;
 

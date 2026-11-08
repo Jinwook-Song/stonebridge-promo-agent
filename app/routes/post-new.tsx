@@ -9,16 +9,10 @@ import { Field, Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { createPost } from "../promo/posts.server";
 import { resizeToJpeg } from "../promo/resize-image.client";
-import { MAX_MEMO_CHARS, MAX_PHOTOS, POST_KINDS, type PostKind } from "../promo/types";
+import { KIND_LABELS, MAX_MEMO_CHARS, MAX_PHOTOS, POST_KINDS, type PostKind } from "../promo/types";
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
 import { cn } from "../lib/utils";
-
-const KIND_LABELS: Record<PostKind, string> = {
-  case: "단체 주문 사례",
-  product: "상품·시즌 안내",
-  other: "기타",
-};
 
 const MEMO_PLACEHOLDER = "예) 구리 OO고등학교 마카롱 6구 40세트, 리본+쇼핑백, 선생님 선물용";
 

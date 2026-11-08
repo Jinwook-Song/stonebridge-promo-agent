@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Db } from "../server/db";
 import { type Example, pickExamples } from "./examples.server";
 import type { PromoSettings } from "./settings.server";
-import type { Channel, PostKind } from "./types";
+import { CHANNEL_LABELS, CHANNELS, KIND_LABELS, type Channel, type PostKind } from "./types";
 
 // ---- Output schemas -------------------------------------------------------
 // Passed to Claude structured outputs (`output_config.format`), which supports only a
@@ -49,28 +49,17 @@ export const ChannelRewrite = z.object({
 });
 export type ChannelRewrite = z.infer<typeof ChannelRewrite>;
 
-// ---- Labels ---------------------------------------------------------------
-
-const KIND_LABEL: Record<PostKind, string> = {
-  case: "단체 주문 사례",
-  product: "상품·시즌",
-  other: "기타",
-};
-
-const CHANNEL_LABEL: Record<Channel, string> = {
-  blog: "블로그",
-  instagram: "인스타그램",
-  daangn: "당근",
-  place: "플레이스",
-};
-
 // ---- System prompt --------------------------------------------------------
 
 const ROLE_LINE =
-  "당신은 실제로 운영 중인 카페의 사장님이 되어 홍보 글을 씁니다. " +
+  "당신은 실제로 운영 중인 카페의 사장님이 되어 소식 글을 씁니다. " +
   "글은 모두 사장님이 직접 쓴 것처럼 1인칭(\"저희\")으로 씁니다. " +
   "네 채널(블로그, 인스타그램, 당근, 플레이스)에 같은 내용을 쓰되 채널마다 말투와 분량을 맞춥니다. " +
-  "일반적인 마케팅 문체보다 아래 예시 글의 말투와 구성을 가깝게 따라 합니다.";
+  "아래 예시 글의 말투와 구성을 가깝게 따라 하고, 일반적인 글쓰기 투로 바꾸지 않습니다. " +
+  "광고 문구(\"~해 보세요!\", \"놓치지 마세요\"), 과한 칭찬, 긴 문장은 쓰지 않는다. 한 줄에 한 문장, 짧게.";
+
+const EXAMPLES_NOTE =
+  "예시 글은 말투와 구성만 참고한다. 예시 속 숫자·가격·기관 이름·사실은 이번 글에 가져오지 않는다.";
 
 const ABSOLUTE_RULES = `- 메모, 사진, 사장님이 준 정보에 없는 숫자·가격·날짜·기관 이름·사람 이름은 쓰지 않는다. 모르면 그 문장을 빼거나 "문의 주세요"로 쓴다.
 - 꼬리말(배송 정책, 주소, 영업시간, 연락처)과 가격표는 쓰지 않는다. 프로그램이 따로 붙인다.
@@ -84,9 +73,9 @@ type ExampleSet = Record<Channel, Example[]>;
  * examples keep the order they were given in.
  */
 export function buildSystem(s: PromoSettings, ex: ExampleSet): string {
-  const exampleBlocks = (Object.keys(CHANNEL_LABEL) as Channel[]).flatMap((channel) =>
+  const exampleBlocks = CHANNELS.flatMap((channel) =>
     ex[channel].map((e, i) => {
-      const heading = `### ${CHANNEL_LABEL[channel]} 예시 ${i + 1} (${KIND_LABEL[e.kind]})`;
+      const heading = `### ${CHANNEL_LABELS[channel]} 예시 ${i + 1} (${KIND_LABELS[e.kind]})`;
       return [heading, e.title ? `제목: ${e.title}` : null, e.body.trim()]
         .filter((line) => line !== null)
         .join("\n");
@@ -98,7 +87,7 @@ export function buildSystem(s: PromoSettings, ex: ExampleSet): string {
     `## 말투 규칙\n${s.voiceRules.trim()}`,
     `## 채널 규칙\n${s.channelRules.trim()}`,
     `## 절대 규칙\n${ABSOLUTE_RULES}`,
-    exampleBlocks.length > 0 ? `## 예시 글\n\n${exampleBlocks.join("\n\n")}` : null,
+    exampleBlocks.length > 0 ? `## 예시 글\n${EXAMPLES_NOTE}\n\n${exampleBlocks.join("\n\n")}` : null,
   ]
     .filter((section) => section !== null)
     .join("\n\n");
@@ -119,13 +108,21 @@ export function buildUserContent(
   ]);
   const markerInstruction =
     sources.length > 0
-      ? `블로그 본문에 사진 위치를 [사진 1]~[사진 ${sources.length}]로 표시하세요.`
+      ? sources.length === 1
+        ? "블로그 본문에 [사진 1] 위치를 표시하세요."
+        : `블로그 본문에 사진 위치를 [사진 1]~[사진 ${sources.length}]로 표시하세요.`
       : "사진이 없습니다. [사진] 표시를 쓰지 마세요.";
   const brief = [
-    `글 종류: ${KIND_LABEL[post.kind]}`,
+    `글 종류: ${KIND_LABELS[post.kind]}`,
     `메모: ${post.memo.trim() || "(없음)"}`,
     `개인 고객 여부: ${post.privateCustomer ? "개인 고객 주문 (이름·연락처·사는 곳 쓰지 않기)" : "아님"}`,
     markerInstruction,
+    // The price table is appended by code to blog and daangn only (withFixedText).
+    ...(post.attachPrices
+      ? [
+          "본문 아래에 가격표가 따로 붙습니다. 가격을 본문에 쓰지 말고, 필요하면 '가격은 아래를 참고해 주세요'처럼만 쓰세요.",
+        ]
+      : []),
   ].join("\n");
   return [...photos, { type: "text", text: brief }];
 }
