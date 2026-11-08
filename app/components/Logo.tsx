@@ -25,7 +25,7 @@ export function LogoMark({ className }: { className?: string }) {
 
 /** Mark + STONE BRIDGE wordmark (the sign's clean caps). `sub` is the small line under it. */
 export function Logo({
-  sub = "근무관리",
+  sub = "홍보글",
   className,
   markClassName,
 }: {
