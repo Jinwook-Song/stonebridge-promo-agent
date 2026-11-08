@@ -1,0 +1,4 @@
+# Vite content-hashes every file under /assets/, so a changed file gets a new URL.
+# Let browsers keep them for a year without revalidating (saves ~40 round trips per page).
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
