@@ -1,0 +1,7 @@
+ANTHROPIC_API_KEY=
+SESSION_SECRET=
+OWNER_INITIAL_PASSWORD=
+IMAGE_URL_SECRET=
+PUBLIC_ORIGIN=http://localhost:5173
+# Uncomment to use canned drafts instead of calling Claude (local UI work, no API key needed).
+# FAKE_CLAUDE=1

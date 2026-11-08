@@ -1,0 +1,54 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "stonebridge-promo",
+	"compatibility_date": "2026-10-30",
+	// AsyncLocalStorage carries the per-request D1 session (app/server/db.ts)
+	"compatibility_flags": ["nodejs_als"],
+	"main": "./workers/app.ts",
+	"observability": {
+		"enabled": true
+	},
+	"upload_source_maps": true,
+	// Both can be overridden in .dev.vars for local dev. Declared here because with `secrets`
+	// set, .dev.vars keys that are neither secrets nor vars are not loaded.
+	"vars": {
+		// Origin Claude fetches signed photo URLs from. Placeholder until the first deploy (Task 9);
+		// while it is an `example` host, generation fails at once with an admin message
+		// (docs/deploy-checklist.md).
+		// Local dev: http://localhost:5173 (not https, so photos go to Claude as base64).
+		"PUBLIC_ORIGIN": "https://stonebridge-promo.wlsdnr129.workers.dev",
+		// "1" = canned drafts instead of calling Claude. Local dev only.
+		"FAKE_CLAUDE": "0"
+	},
+	// set via `wrangler secret put` (prod) / .dev.vars (local)
+	"secrets": {
+		"required": ["ANTHROPIC_API_KEY", "SESSION_SECRET", "OWNER_INITIAL_PASSWORD", "IMAGE_URL_SECRET"]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "promo-agent",
+			// placeholder until `wrangler d1 create promo-agent` (Task 9)
+			"database_id": "1c172fe9-6cbb-4f6b-b3ca-16fe498076dc",
+			"migrations_dir": "drizzle"
+		}
+	],
+	// 사진 (private: r2.dev / custom domain 공개 접근 켜지 않음)
+	"r2_buckets": [
+		{
+			"binding": "PHOTOS",
+			"bucket_name": "promo-photos"
+		}
+	],
+	"workflows": [
+		{
+			"name": "generate-post",
+			"binding": "GENERATE",
+			"class_name": "GeneratePostWorkflow"
+		}
+	]
+}

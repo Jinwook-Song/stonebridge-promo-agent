@@ -1,0 +1,88 @@
+@import "tailwindcss" source(".");
+@import "tw-animate-css";
+
+/*
+ * STONE BRIDGE palette, taken from the shop itself: charcoal-navy storefront sign #2e3d5a,
+ * black/white checkerboard + grey pebbles of the badge logo, warm beige walls #e5dcd1,
+ * macaron pastels for accents (blush = the pink macaron).
+ * The admin UI is light-only on purpose: a dark system theme must not flip it.
+ */
+:root {
+  --radius: 0.75rem;
+  --background: #f6f4f0;
+  --foreground: #1f2430;
+  --card: #ffffff;
+  --card-foreground: #1f2430;
+  --popover: #ffffff;
+  --popover-foreground: #1f2430;
+  --primary: #2e3d5a;
+  --primary-foreground: #ffffff;
+  --secondary: #ebe7e0;
+  --secondary-foreground: #1f2430;
+  --muted: #f0ede8;
+  --muted-foreground: #6a6e78;
+  --accent: #e7ebf2;
+  --accent-foreground: #2e3d5a;
+  --destructive: #c23b32;
+  --destructive-foreground: #ffffff;
+  --success: #2f7d4f;
+  --warning: #9a6512;
+  --border: #e4e0d9;
+  --input: #d5d1c9;
+  --ring: #2e3d5a;
+  --blush: #f3b5c2;
+  --beige: #e5dcd1;
+  --stone: #9ea4ae;
+}
+
+@theme inline {
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui,
+    "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-blush: var(--blush);
+  --color-beige: var(--beige);
+  --color-stone: var(--stone);
+}
+
+@layer base {
+  *,
+  ::after,
+  ::before {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground antialiased;
+    color-scheme: light;
+    font-feature-settings: "tnum" 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Money and times line up in columns. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}

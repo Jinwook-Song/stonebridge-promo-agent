@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "scripts/**/*",
+    "app/promo/types.ts",
+    "app/promo/claude.server.ts",
+    "app/promo/default-rules.ts",
+    "app/promo/examples.server.ts",
+    "app/promo/fact-check.ts",
+    "app/promo/prompt.ts",
+    "app/promo/settings.server.ts",
+    "app/server/db.ts",
+    "app/server/errors.ts",
+    "database/schema.ts"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "strict": true,
+    "types": ["node"],
+    "lib": ["ES2022"],
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler"
+  }
+}
