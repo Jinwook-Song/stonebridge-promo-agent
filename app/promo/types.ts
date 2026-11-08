@@ -12,3 +12,8 @@ export type DraftSource = (typeof DRAFT_SOURCES)[number];
 
 export const EXAMPLE_SOURCES = ["blog_import", "owner_final"] as const;
 export type ExampleSource = (typeof EXAMPLE_SOURCES)[number];
+
+/** New-post upload limits, shared by the form and the server-side checks. */
+export const MAX_PHOTOS = 8;
+export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+export const MAX_MEMO_CHARS = 500;
