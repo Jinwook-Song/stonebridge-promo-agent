@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { loader } from "../app/routes/kakao.callback";
 import { kakaoStateCookie } from "../app/kakao/state-cookie.server";
 
@@ -20,6 +20,16 @@ async function callback(query: string, state?: string) {
 }
 
 describe("kakao callback", () => {
+  // None of these paths may reach Kakao; fail loudly if keys ever leak into the test env.
+  beforeAll(() => {
+    vi.stubGlobal("fetch", () => {
+      throw new Error("no network in tests");
+    });
+  });
+  afterAll(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("rejects a missing state cookie", async () => {
     const r = await callback("code=c&state=s1");
     expect(r.location).toBe("/settings?kakao=bad_state#kakao");
