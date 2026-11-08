@@ -11,6 +11,7 @@ import {
   type DraftCall,
   type RewriteCall,
 } from "./claude.server";
+import { normalizeHashtags } from "./draft-text";
 import { signImageUrl } from "./image-url";
 import { getPost, type PostView } from "./posts.server";
 import { buildSystem, buildUserContent, pickExampleSet, type ImageSource } from "./prompt";
@@ -245,7 +246,7 @@ export async function failIfStillGenerating(db: Db, run: RunRef, rewrite: boolea
 }
 
 function hashtagsJson(tags: string[]): string {
-  return JSON.stringify(tags.map((t) => t.trim().replace(/^#+/, "").trim()).filter((t) => t.length > 0));
+  return JSON.stringify(normalizeHashtags(tags));
 }
 
 // ---- Start (called from route actions) ------------------------------------

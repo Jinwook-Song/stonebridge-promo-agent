@@ -4,6 +4,9 @@ import type { Channel } from "./types";
 // Spec §5.4: footers and the price table are stored text the code appends verbatim,
 // so the model can never print a wrong price or phone number.
 
+/** The stored texts this module appends; the result screen sends only these to the browser. */
+export type FixedTexts = Pick<PromoSettings, "footerBlog" | "footerShort" | "priceTable">;
+
 function normalizeHashtags(tags: string[] | null | undefined): string {
   const seen = new Set<string>();
   for (const raw of tags ?? []) {
@@ -16,7 +19,7 @@ function normalizeHashtags(tags: string[] | null | undefined): string {
 export function withFixedText(
   channel: Channel,
   d: { body: string; hashtags?: string[] | null },
-  s: PromoSettings,
+  s: FixedTexts,
   attachPrices: boolean,
 ): string {
   const prices = attachPrices ? s.priceTable : "";

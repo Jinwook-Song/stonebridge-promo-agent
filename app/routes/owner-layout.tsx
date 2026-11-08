@@ -40,7 +40,7 @@ export default function OwnerLayout() {
             <Logo sub="홍보글" />
           </Link>
           <Form method="post" action="/logout">
-            <Button type="submit" variant="ghost" size="sm" className="text-muted-foreground">
+            <Button type="submit" variant="ghost" className="h-11 text-muted-foreground">
               <LogOutIcon aria-hidden="true" />
               로그아웃
             </Button>
@@ -54,7 +54,7 @@ export default function OwnerLayout() {
               end={end}
               className={({ isActive }) =>
                 cn(
-                  "flex h-10 flex-1 items-center justify-center rounded-md text-sm font-medium transition-colors",
+                  "flex h-11 flex-1 items-center justify-center rounded-md text-sm font-medium transition-colors",
                   isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
                 )
               }

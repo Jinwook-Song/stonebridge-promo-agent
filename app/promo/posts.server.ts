@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { drafts, photos, posts } from "../../database/schema";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
@@ -153,11 +153,24 @@ export type PostListItem = {
   kind: PostKind;
   memoPreview: string;
   createdAt: string;
+  /** Channels whose latest version the owner has confirmed (확정). */
+  confirmedCount: number;
 };
 
 export async function listPosts(db: Db, limit = 50): Promise<PostListItem[]> {
   const rows = await db
-    .select({ id: posts.id, status: posts.status, kind: posts.kind, memo: posts.memo, createdAt: posts.createdAt })
+    .select({
+      id: posts.id,
+      status: posts.status,
+      kind: posts.kind,
+      memo: posts.memo,
+      createdAt: posts.createdAt,
+      // Same rule as the result screen: only a channel's latest version counts. "posts"."id" is
+      // spelled out: drizzle renders ${posts.id} unqualified here, which would bind to d.id.
+      confirmedCount: sql<number>`(SELECT count(*) FROM ${drafts} AS d WHERE d.post_id = "posts"."id"
+        AND d.confirmed_at IS NOT NULL
+        AND d.version = (SELECT max(v.version) FROM ${drafts} AS v WHERE v.post_id = d.post_id AND v.channel = d.channel))`,
+    })
     .from(posts)
     .orderBy(desc(posts.createdAt), desc(posts.id))
     .limit(limit);
