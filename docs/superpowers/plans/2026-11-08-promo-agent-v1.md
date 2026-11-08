@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-08-promo-agent-design.md`
 
-**Reference codebase:** `~/repository/mine/web/cafe-manager` (private, same author). "copy from cafe-manager" means copy the file, then delete anything domain-specific (employees, shifts, payroll, documents, share links).
+**Reference codebase:** the author's private `cafe-manager` repo (same stack). "copy from cafe-manager" means copy the file, then delete anything domain-specific (employees, shifts, payroll, documents, share links).
 
 ## Global Constraints
 
@@ -29,7 +29,7 @@
 1. **Claude fails** (refusal, `max_tokens`, JSON that fails the schema, network) → post becomes `failed` with a Korean reason and a 다시 시도 button; never stuck on `generating`. → Task 7 tests.
 2. **Double tap / reopened page** while generating → only one Workflow instance runs; a second start is refused. → Task 7 test `startGeneration refuses while generating`.
 3. **Zero photos** → generation works, no image blocks sent, prompt tells model not to write `[사진 N]`. → Task 6 test.
-4. **Same number, different spelling** (`20,500` vs `20500`, `70세트` vs `70 세트`) → not flagged by fact check. → Task 6 test.
+4. **Same number, different spelling** (`15,000` vs `15000`, `40세트` vs `40 세트`) → not flagged by fact check. → Task 6 test.
 5. **Settings not filled yet** (empty footer / price table) → copied text has no `undefined`, no trailing blank-line pile. → Task 6 test.
 
 ---
@@ -47,7 +47,7 @@
 Tables (`database/schema.ts`, sqlite, ISO-string timestamps like cafe-manager):
 - `settings(key text pk, value text not null)`
 - `login_attempts(id int pk auto, ip text, at text, ok int bool)`
-- `posts(id int pk auto, kind text, memo text, private_customer int bool, attach_prices int bool, status text, workflow_id text null, error text null, input_tokens int null, output_tokens int null, created_at text, generated_at text null)`
+- `posts(id int pk auto, kind text, memo text, private_customer int bool, attach_prices int bool, status text, rewriting_channel text null, workflow_id text null, error text null, input_tokens int null, output_tokens int null, created_at text, generated_at text null)`
 - `photos(id int pk auto, post_id int fk cascade, r2_key text unique, position int, width int, height int)`; unique `(post_id, position)`
 - `drafts(id int pk auto, post_id int fk cascade, channel text, version int, title text null, body text, hashtags text null /* JSON array */, source text /* ai|edit */, confirmed_at text null, edit_ratio real null, created_at text)`; unique `(post_id, channel, version)`
 - `examples(id int pk auto, channel text, kind text, title text null, body text, source text /* blog_import|owner_final */, enabled int bool default 1, source_url text null, created_at text)`
@@ -152,7 +152,7 @@ it("pickExamples returns [] for a channel with no examples", async () => {
   - `parseRss(xml: string): { title: string; url: string; logNo: string; pubDate: string }[]` — handles `<![CDATA[...]]>` in `title` and `link`, strips `?fromRss...` query.
   - `parsePostHtml(html: string): string` — walks the SmartEditor body in document order: each `<p class="se-text-paragraph...">` → its text (HTML-unescaped, tags stripped, zero-width `​` → empty line); each `se-image-resource` image → `[사진 N]` (N counts from 1). Joined with `\n`; runs of 3+ newlines collapsed to 2. The post title paragraph (first `se-title-text` / first paragraph equal to RSS title) is dropped.
   - `classifyKind(title: string): PostKind` — `"case"` if `/단체\s?주문|\d+\s?(세트|인분)|\d{3,}\s?개/` matches, else `"product"`.
-- `scripts/import-blog.ts` (run `npx tsx scripts/import-blog.ts --blog stone_bridge_ --limit 50`): fetch `https://rss.blog.naver.com/<blog>.xml`, then each `https://m.blog.naver.com/PostView.naver?blogId=<blog>&logNo=<logNo>` (User-Agent mobile, 500 ms between requests), write `private/examples.json` and `private/seed-examples.sql` (`INSERT INTO examples (channel, kind, title, body, source, enabled, source_url, created_at) VALUES ('blog', ...)`, single quotes doubled). Footer block is NOT stripped by the script (settings page lets owner disable; prompt says footers are added by code) — **exception:** strip text from the line starting with the configured `--footer-start` string (default `30만원 이상 구매시`) to the end, so examples don't teach the model to write footers.
+- `scripts/import-blog.ts` (run `npx tsx scripts/import-blog.ts --blog <blogId> --footer-start "<footer first line>" --limit 50`): fetch `https://rss.blog.naver.com/<blog>.xml`, then each `https://m.blog.naver.com/PostView.naver?blogId=<blog>&logNo=<logNo>` (User-Agent mobile, 500 ms between requests), write `private/examples.json` and `private/seed-examples.sql` (`INSERT INTO examples (channel, kind, title, body, source, enabled, source_url, created_at) VALUES ('blog', ...)`, single quotes doubled). Footer block is NOT stripped by the script (settings page lets owner disable; prompt says footers are added by code) — **exception:** strip text from the first line starting with the required `--footer-start` argument (no default; pass the footer's first line on the command line) to the end, so examples don't teach the model to write footers.
 
 - [ ] **Step 1: Tests**
 
@@ -166,10 +166,10 @@ it("parsePostHtml keeps line order and numbers photos", () => {
 });
 it.each([
   ["[OO초등학교] 샌드위치 + 음료 단체주문", "case"],
-  ["[결혼식 답례품] 마카롱3구 + 쿠키 2개 120세트", "case"],
-  ["[OO관리소] 마카롱900개 | 마카롱 12구 75세트", "case"],
-  ["[단체메뉴] 마카롱 4구 세트 10,500", "product"],
-  ["스톤브릿지 2026 수능 마카롱 선물세트", "product"],
+  ["[OO 답례품] 쿠키 2개 + 마카롱 3구 50세트", "case"],
+  ["[OO관리소] 쿠키 500개 | 단체 간식", "case"],
+  ["[단체메뉴] 쿠키 6개 세트 9,000", "product"],
+  ["OO카페 2026 연말 쿠키 선물세트", "product"],
 ])("classifyKind(%s) = %s", (t, k) => expect(classifyKind(t)).toBe(k));
 ```
 
@@ -252,7 +252,7 @@ it("createPost allows zero photos", async () => { /* resolves to a number */ });
     - instagram: body, footerShort, hashtags as `#a #b` (strip leading `#` from input, dedupe)
     - daangn: body, (attachPrices ? priceTable : ""), footerShort
     - place: body
-  - `findUnsupportedNumbers(text: string, sources: string[]): string[]` — tokens matching `/\d[\d,]*(?:\.\d+)?\s?(?:원|구|세트|인분|개|명|시|분|일|월|%)?/g`, ignoring those inside `[사진 N]`; normalize by removing `,` and whitespace; supported if its digit run (commas removed) equals some digit run in the sources (commas removed) — exact run match, not substring, so `20,500` ≈ `20500원` but `0` is not supported by `70`. Returns original tokens, deduped, in order.
+  - `findUnsupportedNumbers(text: string, sources: string[]): string[]` — tokens matching `/\d[\d,]*(?:\.\d+)?\s?(?:원|구|세트|인분|개|명|시|분|일|월|%)?/g`, ignoring those inside `[사진 N]`; normalize by removing `,` and whitespace; supported if its digit run (commas removed) equals some digit run in the sources (commas removed) — exact run match, not substring, so `15,000` ≈ `15000원` but `0` is not supported by `40`. Returns original tokens, deduped, in order.
   - `findPossibleNames(text: string): string[]` — `/([가-힣]{2,3})\s?(님|씨)/g`, excluding `사장|손님|고객|선생|여러분|담당자|직원|원장|부장|팀장|과장|대리`.
 
 - [ ] **Step 1: Tests**
@@ -270,8 +270,8 @@ it("system prompt is byte-identical for identical inputs and contains 절대 규
 });
 // fixed text
 it("blog with prices and footer", () => {
-  expect(withFixedText("blog", { body: "본문\n" }, { ...S, priceTable: "4구 : 10,500", footerBlog: "주소" }, true))
-    .toBe("본문\n\n4구 : 10,500\n\n주소");
+  expect(withFixedText("blog", { body: "본문\n" }, { ...S, priceTable: "4구 : 9,900", footerBlog: "주소" }, true))
+    .toBe("본문\n\n4구 : 9,900\n\n주소");
 });
 it("empty settings leave no blank tail or undefined", () => {
   const out = withFixedText("daangn", { body: "본문" }, { ...S, priceTable: "", footerShort: "" }, true);
@@ -284,10 +284,10 @@ it("instagram hashtags normalized", () => {
 it("place never gets footer or prices", () => { /* === body */ });
 // fact check
 it("comma and unit spelling differences are supported", () => {
-  expect(findUnsupportedNumbers("8구 20,500원 70 세트", ["8구 20500", "70세트"])).toEqual([]);
+  expect(findUnsupportedNumbers("6구 15,000원 40 세트", ["6구 15000", "40세트"])).toEqual([]);
 });
 it("invented numbers are flagged, photo markers ignored", () => {
-  expect(findUnsupportedNumbers("[사진 3] 100세트 주문! 5~7일 전", ["70세트"])).toEqual(["100세트", "5", "7일"]);
+  expect(findUnsupportedNumbers("[사진 3] 100세트 주문! 5~7일 전", ["40세트"])).toEqual(["100세트", "5", "7일"]);
 });
 it("names flagged except role words", () => {
   expect(findPossibleNames("김민수님 감사합니다 사장님 손님")).toEqual(["김민수님"]);
@@ -316,9 +316,9 @@ it("names flagged except role words", () => {
   - `makeClaudeCalls(apiKey: string): { drafts: DraftCall; rewrite: RewriteCall }` — `client.beta.messages.stream({ model: "claude-opus-5-5", max_tokens: 32000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default", output_config: { effort: "high", format: zodOutputFormat(Schema) }, system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: user }] })` → `finalMessage()`; check `stop_reason` (`refusal`, `max_tokens`) before reading; take the text block, `JSON.parse` + `Schema.safeParse`; failures → `GenerationError`. If the SDK's beta stream typing rejects `output_config.format` with a zod helper, pass the JSON schema object (`{ type: "json_schema", schema: z.toJSONSchema(Schema) }`) — let the compiler decide.
   - `type GenDeps = { db: Db; drafts: DraftCall; rewrite: RewriteCall; signUrl: (key: string) => Promise<string>; now: () => Date }`
   - `runGeneration(deps: GenDeps, postId: number): Promise<void>` — load post/photos/settings/examples → `buildSystem` + `buildUserContent` → call → insert 4 drafts (`version` = max+1 per channel, `source: "ai"`, body without fixed text, blog title, instagram hashtags JSON) → post `status: "ready"`, `generated_at`, tokens. On `GenerationError` or any error: `status: "failed"`, `error: message` (non-GenerationError → `잠시 후 다시 시도해 주세요.`), then rethrow only non-GenerationError (so Workflow retries transient errors).
-  - `runRewrite(deps, postId, channel: Channel, instruction: string): Promise<void>` — same system; user = photos + memo + `현재 ${label} 초안:\n${body}\n\n사장님 요청: ${instruction || "다시 써 주세요"}\n이 채널 글만 다시 쓰세요.` → insert new version for that channel only; post status back to `ready`.
-  - `startGeneration(env: Env, db: Db, postId: number, job: { channel?: Channel; instruction?: string }): Promise<void>` — conditional update `status → "generating"` **only if current status ≠ "generating"** (single SQL `UPDATE ... WHERE id=? AND status != 'generating'`; zero rows changed → `DomainError("BUSY", "이미 만드는 중이에요.")`), then `env.GENERATE.create({ id: \`post-${postId}-${Date.now()}\`, params: { postId, ...job } })`, store `workflow_id`.
-  - `GeneratePostWorkflow.run(event, step)`: `await step.do("generate", { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" }, timeout: "10 minutes" }, () => job.channel ? runRewrite(...) : runGeneration(...))`. Wrap in try/catch: after retries exhausted, set `status: "failed"` if still `generating`. `signUrl` uses origin from `env.PUBLIC_ORIGIN` (add to `wrangler.jsonc` `vars`, e.g. `https://stonebridge-promo.<subdomain>.workers.dev`).
+  - `runRewrite(deps, postId, channel: Channel, instruction: string): Promise<void>` — same system; user = photos + memo + `현재 ${label} 초안:\n${body}\n\n사장님 요청: ${instruction || "다시 써 주세요"}\n이 채널 글만 다시 쓰세요.` → insert new version for that channel only; post status back to `ready`, `rewriting_channel → null` (also cleared on failure).
+  - `startGeneration(env: Env, db: Db, postId: number, job: { channel?: Channel; instruction?: string }): Promise<void>` — conditional update `status → "generating"`, `rewriting_channel → job.channel ?? null` **only if current status ≠ "generating"** (single SQL `UPDATE ... WHERE id=? AND status != 'generating'`; zero rows changed → `DomainError("BUSY", "이미 만드는 중이에요.")`), then `env.GENERATE.create({ id: \`post-${postId}-${Date.now()}\`, params: { postId, ...job } })`, store `workflow_id`.
+  - `GeneratePostWorkflow.run(event, step)`: `await step.do("generate", { retries: { limit: 2, delay: "10 seconds", backoff: "exponential" }, timeout: "10 minutes" }, () => job.channel ? runRewrite(...) : runGeneration(...))`. Wrap in try/catch: after retries exhausted, set `status: "failed"` if still `generating`. `signUrl` uses origin from `env.PUBLIC_ORIGIN` (add to `wrangler.jsonc` `vars`, e.g. `https://stonebridge-promo.<subdomain>.workers.dev`). **Local dev:** Anthropic cannot fetch `localhost` URLs, so when `PUBLIC_ORIGIN` does not start with `https://` photos go as base64 read from R2. Implement as `photoSource(env, key): Promise<ImageSource>` (`ImageSource = Anthropic.ImageBlockParam["source"]`) in `generate.server.ts`; `GenDeps` takes `photoSource: (key: string) => Promise<ImageSource>` instead of `signUrl`, and Task 6's `buildUserContent(post, sources: ImageSource[])` takes sources instead of URL strings.
 
 - [ ] **Step 1: Tests (fake `drafts`/`rewrite` calls; real D1)**
 
@@ -369,7 +369,7 @@ it("runGeneration passes signed urls, not base64", async () => { /* captured use
   - `confirmDraft(db, postId, channel, now): Promise<void>` — latest version gets `confirmed_at`, `edit_ratio = editRatio(firstAiVersion.body, latest.body)`; `addExample({ channel, kind: post.kind, title, body: latest.body, source: "owner_final" })`. Confirming twice does not add a second example.
 - Routes (`routes.ts` inside owner layout): `index` → posts.tsx, `posts/new` → post-new.tsx, `posts/:id` → post-detail.tsx, `api/posts/:id/status` → `{ status, error }` JSON, `settings`. Outside layout: `login`, `logout`, `img/*`.
 - `post-detail.tsx`:
-  - `generating`: spinner + `초안을 만드는 중이에요 (1~2분). 화면을 닫아도 계속 만들어요.`; poll status every 2 s; on `ready`/`failed` revalidate.
+  - `generating`: spinner + `초안을 만드는 중이에요 (1~2분). 화면을 닫아도 계속 만들어요.`; poll status every 2 s; on `ready`/`failed` revalidate. If `rewriting_channel` is set (one-channel rewrite), keep all tabs visible, show the spinner only in that tab, other tabs stay editable.
   - `failed`: error text + `다시 시도` (calls `startGeneration`).
   - `ready`: tabs 블로그 / 인스타 / 당근 / 플레이스. Per tab: title input (blog, daangn), body textarea (auto-grow), hashtags input (instagram, space-separated), read-only grey box showing fixed text that will be appended, amber chips from `findUnsupportedNumbers(body, [memo, priceTable, footers])` and (if privateCustomer) `findPossibleNames`, buttons `복사` (copies `withFixedText(...)`, plus blog title on its own first line; toast `복사했어요`), `다시 쓰기` (opens one-line instruction input → `startGeneration` with channel), `확정` (saves edit if dirty, then `confirmDraft`; shows `확정됨 · 고친 정도 23%`). Blog tab also shows the numbered photo strip (thumbnails via `/img/...`, number badge, `photos[n].note` caption) with per-photo `저장` link for re-uploading to Naver.
   - Edits autosave on blur via `saveDraftEdit`.
