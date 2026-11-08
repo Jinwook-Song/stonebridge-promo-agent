@@ -3,6 +3,7 @@
   "include": [
     "scripts/**/*",
     "app/promo/types.ts",
+    "app/kakao/types.ts",
     "app/promo/claude.server.ts",
     "app/promo/default-rules.ts",
     "app/promo/examples.server.ts",

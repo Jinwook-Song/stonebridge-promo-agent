@@ -7,6 +7,7 @@ import {
   POST_KINDS,
   POST_STATUSES,
 } from "../app/promo/types";
+import { ALERT_KINDS, ALERT_STATUSES } from "../app/kakao/types";
 
 // 시각은 모두 UTC ISO 문자열.
 
@@ -112,5 +113,45 @@ export const examples = sqliteTable(
     check("examples_channel_check", inList(t.channel, CHANNELS)),
     check("examples_kind_check", inList(t.kind, POST_KINDS)),
     check("examples_source_check", inList(t.source, EXAMPLE_SOURCES)),
+  ],
+);
+
+/**
+ * The one Kakao account that receives alerts (id is always 1). Whoever connects last replaces it,
+ * so the developer can test with their own account and the owner takes over by connecting again.
+ */
+export const kakaoLink = sqliteTable(
+  "kakao_link",
+  {
+    id: integer("id").primaryKey(),
+    kakaoUserId: text("kakao_user_id").notNull(),
+    accessToken: text("access_token").notNull(),
+    accessExpiresAt: text("access_expires_at").notNull(),
+    refreshToken: text("refresh_token").notNull(),
+    refreshExpiresAt: text("refresh_expires_at").notNull(),
+    linkedAt: text("linked_at").notNull(),
+    /** Set when Kakao rejects the refresh token; she has to connect again. */
+    needsRelogin: integer("needs_relogin", { mode: "boolean" }).notNull().default(false),
+    lastError: text("last_error"),
+  },
+  (t) => [check("kakao_link_single_row", sql`${t.id} = 1`)],
+);
+
+export const alertLog = sqliteTable(
+  "alert_log",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    kind: text("kind", { enum: ALERT_KINDS }).notNull(),
+    /** KST date (order) or KST month (monthly) the alert is for. */
+    periodKey: text("period_key").notNull(),
+    status: text("status", { enum: ALERT_STATUSES }).notNull(),
+    error: text("error"),
+    createdAt: text("created_at").notNull(),
+    sentAt: text("sent_at"),
+  },
+  (t) => [
+    unique("alert_log_kind_period_unique").on(t.kind, t.periodKey),
+    check("alert_log_kind_check", inList(t.kind, ALERT_KINDS)),
+    check("alert_log_status_check", inList(t.status, ALERT_STATUSES)),
   ],
 );

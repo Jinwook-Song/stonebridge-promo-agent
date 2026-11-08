@@ -5,3 +5,5 @@ IMAGE_URL_SECRET=
 PUBLIC_ORIGIN=http://localhost:5173
 # Uncomment to use canned drafts instead of calling Claude (local UI work, no API key needed).
 # FAKE_CLAUDE=1
+# Kakao alerts: not loaded locally (not in wrangler.jsonc secrets/vars) and the redirect URI is the
+# deployed origin, so connect/test on the deployed Worker. See docs/kakao-setup.md.

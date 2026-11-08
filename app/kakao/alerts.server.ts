@@ -1,0 +1,170 @@
+import { desc, eq, inArray, sql } from "drizzle-orm";
+import { alertLog, settings } from "../../database/schema";
+import type { Db } from "../server/db";
+import type { Fetch, KakaoConfig, MemoMessage } from "./client.server";
+import { describeKakaoError, getLink, keepAlive, sendToMe } from "./link.server";
+import type { AlertKind } from "./types";
+
+/**
+ * Cron expressions (UTC) in wrangler.jsonc `triggers.crons`; keep the two in sync.
+ * KST is UTC+9 all year (no DST).
+ */
+export const CRONS = {
+  /** 23:20 KST — she orders cafe supplies on Coupang after closing. */
+  order: "20 14 * * *",
+  /** 10:00 KST daily; sends only on her chosen day of the month. */
+  monthly: "0 1 * * *",
+} as const satisfies Record<AlertKind, string>;
+
+export type AlertSettings = {
+  orderEnabled: boolean;
+  monthlyEnabled: boolean;
+  /** 1–31; months without that day use their last day. */
+  monthlyDay: number;
+};
+
+const KEYS = {
+  orderEnabled: "alert_order_enabled",
+  monthlyEnabled: "alert_monthly_enabled",
+  monthlyDay: "alert_monthly_day",
+} as const satisfies Record<keyof AlertSettings, string>;
+
+const DEFAULT_MONTHLY_DAY = 1;
+
+export async function getAlertSettings(db: Db): Promise<AlertSettings> {
+  const rows = await db.select().from(settings).where(inArray(settings.key, Object.values(KEYS)));
+  const byKey = new Map(rows.map((r) => [r.key, r.value]));
+  const day = Number(byKey.get(KEYS.monthlyDay));
+  return {
+    // Off unless turned on: connecting alone must not start nightly pings.
+    orderEnabled: byKey.get(KEYS.orderEnabled) === "1",
+    monthlyEnabled: byKey.get(KEYS.monthlyEnabled) === "1",
+    monthlyDay: Number.isInteger(day) && day >= 1 && day <= 31 ? day : DEFAULT_MONTHLY_DAY,
+  };
+}
+
+export function parseMonthlyDay(raw: string): number | null {
+  const day = Number(raw.trim());
+  return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
+}
+
+export async function saveAlertSettings(db: Db, patch: Partial<AlertSettings>): Promise<void> {
+  const values: { key: string; value: string }[] = [];
+  if (patch.orderEnabled !== undefined) values.push({ key: KEYS.orderEnabled, value: patch.orderEnabled ? "1" : "0" });
+  if (patch.monthlyEnabled !== undefined) {
+    values.push({ key: KEYS.monthlyEnabled, value: patch.monthlyEnabled ? "1" : "0" });
+  }
+  if (patch.monthlyDay !== undefined) values.push({ key: KEYS.monthlyDay, value: String(patch.monthlyDay) });
+  if (values.length === 0) return;
+  await db
+    .insert(settings)
+    .values(values)
+    .onConflictDoUpdate({ target: settings.key, set: { value: sql`excluded.value` } });
+}
+
+/** Calendar parts of `now` in Korea. */
+export function kst(now: Date) {
+  const k = new Date(now.getTime() + 9 * 3600_000);
+  const y = k.getUTCFullYear();
+  const m = k.getUTCMonth() + 1;
+  const d = k.getUTCDate();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return {
+    date: `${y}-${pad(m)}-${pad(d)}`,
+    month: `${y}-${pad(m)}`,
+    day: d,
+    daysInMonth: new Date(Date.UTC(y, m, 0)).getUTCDate(),
+  };
+}
+
+export function alertMessage(kind: AlertKind | "test", origin: string): MemoMessage {
+  const base = origin.replace(/\/+$/, "");
+  switch (kind) {
+    case "order":
+      return { text: "쿠팡 발주할 시간이에요\n카페 재료 주문 잊지 마세요.", url: `${base}/`, buttonTitle: "앱 열기" };
+    case "monthly":
+      return {
+        text: "이번 달 홍보글 올릴 때예요\n사진이랑 메모만 올려 주시면 블로그·인스타·당근·플레이스 초안을 만들어 드려요.",
+        url: `${base}/posts/new`,
+        buttonTitle: "새 글 쓰기",
+      };
+    case "test":
+      return { text: "스톤브릿지 홍보글 앱 시험 알림이에요. 이 메시지가 보이면 카톡 알림 준비 끝!", url: `${base}/settings`, buttonTitle: "설정 열기" };
+  }
+}
+
+export type ScheduledDeps = {
+  db: Db;
+  cfg: KakaoConfig | null;
+  origin: string;
+  fetch: Fetch;
+};
+
+export type AlertOutcome =
+  | "not_configured"
+  | "unknown_cron"
+  | "disabled"
+  | "not_today"
+  | "not_linked"
+  | "already_sent"
+  | "sent"
+  | "failed";
+
+/** Entry point for the Worker's `scheduled` handler. */
+export async function runScheduled(cron: string, now: Date, deps: ScheduledDeps): Promise<AlertOutcome> {
+  const kind = (Object.keys(CRONS) as AlertKind[]).find((k) => CRONS[k] === cron);
+  if (!kind) return "unknown_cron";
+  if (!deps.cfg) return "not_configured";
+  if (kind === "order") await keepAlive(deps.db, deps.cfg, now, deps.fetch);
+
+  const alerts = await getAlertSettings(deps.db);
+  const today = kst(now);
+  let periodKey: string;
+  if (kind === "order") {
+    if (!alerts.orderEnabled) return "disabled";
+    periodKey = today.date;
+  } else {
+    if (!alerts.monthlyEnabled) return "disabled";
+    if (today.day !== Math.min(alerts.monthlyDay, today.daysInMonth)) return "not_today";
+    periodKey = today.month;
+  }
+  if (!(await getLink(deps.db))) return "not_linked";
+
+  return sendOnce(deps, kind, periodKey, now);
+}
+
+/**
+ * Claims (kind, period) before sending, so a cron that fires twice sends once. A failed send is
+ * recorded, not retried: a late 발주 alert is worse than none.
+ */
+async function sendOnce(deps: ScheduledDeps, kind: AlertKind, periodKey: string, now: Date): Promise<AlertOutcome> {
+  const { db } = deps;
+  const [claim] = await db
+    .insert(alertLog)
+    .values({ kind, periodKey, status: "sending", createdAt: now.toISOString() })
+    .onConflictDoNothing()
+    .returning({ id: alertLog.id });
+  if (!claim) return "already_sent";
+
+  try {
+    await sendToMe(db, deps.cfg!, alertMessage(kind, deps.origin), now, deps.fetch);
+  } catch (e) {
+    await db
+      .update(alertLog)
+      .set({ status: "failed", error: describeKakaoError(e) })
+      .where(eq(alertLog.id, claim.id));
+    console.error(`kakao ${kind} alert failed`, e);
+    return "failed";
+  }
+  try {
+    await db.update(alertLog).set({ status: "sent", sentAt: new Date().toISOString() }).where(eq(alertLog.id, claim.id));
+  } catch (e) {
+    // Delivered; only the log row is stuck at `sending` (shown as 확인 안 됨).
+    console.error(`kakao ${kind} alert sent but not recorded`, e);
+  }
+  return "sent";
+}
+
+export async function recentAlerts(db: Db, limit = 5) {
+  return db.select().from(alertLog).orderBy(desc(alertLog.id)).limit(limit);
+}

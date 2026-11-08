@@ -1,10 +1,12 @@
+import { useEffect, useState, type ReactNode } from "react";
 import { env } from "cloudflare:workers";
 import { CircleAlertIcon, CircleCheckIcon } from "lucide-react";
-import { Form, useFetcher, useNavigation } from "react-router";
+import { Form, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/settings";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
+import { Input } from "../components/ui/input";
 import { Field } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import {
@@ -14,6 +16,18 @@ import {
   type ExampleRow,
 } from "../promo/examples.server";
 import { getSettings, saveSettings } from "../promo/settings.server";
+import {
+  alertMessage,
+  getAlertSettings,
+  parseMonthlyDay,
+  recentAlerts,
+  saveAlertSettings,
+  type AlertSettings,
+} from "../kakao/alerts.server";
+import { describeKakaoError, disconnect, getLink, kakaoConfig, linkExpired, sendToMe } from "../kakao/link.server";
+import { ALERT_LABELS, type AlertKind, type AlertStatus } from "../kakao/types";
+import type { KakaoResult } from "./kakao.callback";
+import { formatDay } from "../promo/format-date";
 import { CHANNEL_LABELS, KIND_LABELS, POST_KINDS, type Channel, type PostKind } from "../promo/types";
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
@@ -27,8 +41,32 @@ export function meta({}: Route.MetaArgs) {
 
 export async function loader({}: Route.LoaderArgs) {
   const db = getDb(env.DB);
-  const [settings, examples] = await Promise.all([getSettings(db), listExamples(db)]);
-  return { settings, examples };
+  const [settings, examples, link, alerts, recent] = await Promise.all([
+    getSettings(db),
+    listExamples(db),
+    getLink(db),
+    getAlertSettings(db),
+    recentAlerts(db),
+  ]);
+  const kakao: KakaoView = {
+    configured: kakaoConfig(env) !== null,
+    // Never send tokens to the browser.
+    link: link && {
+      idTail: link.kakaoUserId.slice(-4),
+      linkedAt: link.linkedAt,
+      needsRelogin: linkExpired(link, new Date()),
+    },
+    alerts,
+    recent: recent.map(({ id, kind, periodKey, status, error, createdAt }) => ({
+      id,
+      kind,
+      periodKey,
+      // A row left at `sending` for long means the worker died mid-send; we can't tell if it went.
+      status: status === "sending" && Date.now() - new Date(createdAt).getTime() > STUCK_MS ? "unknown" : status,
+      error,
+    })),
+  };
+  return { settings, examples, kakao };
 }
 
 function oneOf<T extends string>(values: readonly T[], raw: FormDataEntryValue | null): T {
@@ -54,6 +92,31 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
           channelRules: str("channelRules"),
         });
         return { ok: true, savedAt: Date.now() };
+      case "kakaoTest": {
+        const cfg = kakaoConfig(env);
+        if (!cfg) return { error: "카카오 키가 설정되지 않았어요." };
+        try {
+          await sendToMe(db, cfg, alertMessage("test", env.PUBLIC_ORIGIN), new Date(), (u, init) => fetch(u, init));
+        } catch (e) {
+          return { error: describeKakaoError(e) };
+        }
+        return { ok: true };
+      }
+      case "kakaoDisconnect":
+        await disconnect(db);
+        break;
+      case "setAlert": {
+        const enabled = str("enabled") === "1";
+        const kind = oneOf(["order", "monthly"] as const, form.get("kind"));
+        await saveAlertSettings(db, kind === "order" ? { orderEnabled: enabled } : { monthlyEnabled: enabled });
+        break;
+      }
+      case "setMonthlyDay": {
+        const day = parseMonthlyDay(str("day"));
+        if (day === null) return { error: "1부터 31 사이 날짜를 적어 주세요." };
+        await saveAlertSettings(db, { monthlyDay: day });
+        break;
+      }
       case "setExampleEnabled":
         await setExampleEnabled(db, Number(str("id")), str("enabled") === "1");
         break;
@@ -103,6 +166,8 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-lg font-semibold">설정</h1>
+
+      <KakaoSection kakao={loaderData.kakao} />
 
       {/* The boxes are uncontrolled; after a save, remount them on the reloaded settings (a blanked
           rules box comes back showing the default it now uses). Example toggles use fetchers,
@@ -231,5 +296,241 @@ function ExampleItem({ example: ex }: { example: ExampleRow }) {
         </p>
       )}
     </Card>
+  );
+}
+
+type KakaoView = {
+  configured: boolean;
+  link: { idTail: string; linkedAt: string; needsRelogin: boolean } | null | undefined;
+  alerts: AlertSettings;
+  recent: { id: number; kind: AlertKind; periodKey: string; status: AlertStatus | "unknown"; error: string | null }[];
+};
+
+const STUCK_MS = 10 * 60_000;
+
+const KAKAO_RESULT: Record<KakaoResult, { ok: boolean; text: string }> = {
+  connected: { ok: true, text: "카카오 계정을 연결했어요. '시험 보내기'로 카톡이 오는지 확인해 주세요." },
+  denied: { ok: false, text: "카카오 로그인을 취소했어요." },
+  bad_state: { ok: false, text: "연결 시간이 지났거나 다른 창에서 시작했어요. 다시 눌러 주세요." },
+  no_consent: {
+    ok: false,
+    text: "'카카오톡 메시지 전송'에 동의해야 알림을 받을 수 있어요. 다시 연결하고 동의해 주세요.",
+  },
+  not_configured: { ok: false, text: "카카오 키가 설정되지 않았어요. 관리자에게 알려 주세요." },
+  error: { ok: false, text: "카카오 연결에 실패했어요." },
+};
+
+const STATUS_TEXT: Record<AlertStatus | "unknown", string> = {
+  sending: "보내는 중",
+  sent: "보냄",
+  failed: "실패",
+  unknown: "확인 안 됨",
+};
+
+function KakaoSection({ kakao }: { kakao: KakaoView }) {
+  const [params, setParams] = useSearchParams();
+  // One-shot: keep the login result in state and drop it from the URL, so a reload, a later
+  // settings save or 연결 끊기 never shows a stale "연결했어요".
+  const [{ result, code }] = useState(() => ({
+    result: params.get("kakao") as KakaoResult | null,
+    code: params.get("code"),
+  }));
+  useEffect(() => {
+    if (!params.has("kakao") && !params.has("code")) return;
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("kakao");
+        next.delete("code");
+        return next;
+      },
+      { replace: true, preventScrollReset: true },
+    );
+  }, [params, setParams]);
+  const test = useFetcher<ActionResult>();
+  const disconnectFetcher = useFetcher<ActionResult>();
+  const { link } = kakao;
+  const banner = result && KAKAO_RESULT[result] && !(result === "connected" && !link) ? KAKAO_RESULT[result] : null;
+  const ready = kakao.configured && !!link && !link.needsRelogin;
+
+  return (
+    <section id="kakao" aria-labelledby="kakao-title" className="flex scroll-mt-28 flex-col gap-3">
+      <div>
+        <h2 id="kakao-title" className="font-semibold">
+          카톡 알림
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          연결한 카카오 계정의 &lsquo;나와의 채팅&rsquo;으로 알림이 와요. 마지막에 연결한 계정 하나만 받아요.
+        </p>
+      </div>
+
+      {banner && (
+        <Message
+          result={banner.ok ? { ok: true } : { error: code && !banner.ok ? `${banner.text} (${code})` : banner.text }}
+          success={banner.text}
+        />
+      )}
+
+      <Card className="flex flex-col gap-3 p-3">
+        {!kakao.configured ? (
+          <p className="text-sm text-muted-foreground">
+            <Badge variant="warning" className="mr-1.5">
+              키 미설정
+            </Badge>
+            관리자가 카카오 앱 키를 넣어야 쓸 수 있어요.
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-1.5 text-sm">
+              {!link ? (
+                <Badge variant="muted">연결 안 됨</Badge>
+              ) : link.needsRelogin ? (
+                <Badge variant="destructive">다시 연결 필요</Badge>
+              ) : (
+                <Badge variant="success">연결됨</Badge>
+              )}
+              {link && (
+                <span className="text-muted-foreground">
+                  {formatDay(link.linkedAt)} 연결 · 회원번호 끝자리 {link.idTail}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild variant={ready ? "outline" : "default"} className="h-11">
+                {/* A plain document request: the loader redirects off-site to Kakao. */}
+                <a href="/kakao/connect">{link ? "다른 계정으로 다시 연결" : "카카오 계정 연결"}</a>
+              </Button>
+              {ready && (
+                <test.Form method="post">
+                  <input type="hidden" name="intent" value="kakaoTest" />
+                  <Button type="submit" variant="outline" className="h-11" disabled={test.state !== "idle"}>
+                    {test.state !== "idle" ? "보내는 중…" : "시험 보내기"}
+                  </Button>
+                </test.Form>
+              )}
+              {link && (
+                <disconnectFetcher.Form method="post">
+                  <input type="hidden" name="intent" value="kakaoDisconnect" />
+                  <Button type="submit" variant="ghost" className="h-11 text-muted-foreground">
+                    연결 끊기
+                  </Button>
+                </disconnectFetcher.Form>
+              )}
+            </div>
+            <Message result={test.data} success="보냈어요. 카톡 '나와의 채팅'을 확인해 주세요." />
+          </>
+        )}
+      </Card>
+
+      <AlertToggle
+        kind="order"
+        enabled={kakao.alerts.orderEnabled}
+        description="매일 밤 11시 20분, 쿠팡 발주 알림"
+        canSend={ready}
+      />
+      <AlertToggle
+        kind="monthly"
+        enabled={kakao.alerts.monthlyEnabled}
+        description={`매달 ${kakao.alerts.monthlyDay}일 오전 10시, 홍보글 올릴 때 알림`}
+        canSend={ready}
+      >
+        <MonthlyDay day={kakao.alerts.monthlyDay} />
+      </AlertToggle>
+
+      {kakao.recent.length > 0 && (
+        <div className="flex flex-col gap-1">
+          <h3 className="text-sm font-medium">최근 알림</h3>
+          <ul className="flex flex-col gap-1 text-sm">
+            {kakao.recent.map((a) => (
+              <li key={a.id} className="break-words text-muted-foreground">
+                {a.periodKey} {ALERT_LABELS[a.kind]} ·{" "}
+                <span className={a.status === "failed" ? "text-destructive" : undefined}>{STATUS_TEXT[a.status]}</span>
+                {a.error && <span className="block text-xs">{a.error}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AlertToggle({
+  kind,
+  enabled: saved,
+  description,
+  canSend,
+  children,
+}: {
+  kind: AlertKind;
+  enabled: boolean;
+  description: string;
+  canSend: boolean;
+  children?: ReactNode;
+}) {
+  const fetcher = useFetcher<ActionResult>();
+  const pending = fetcher.formData;
+  const enabled = pending ? pending.get("enabled") === "1" : saved;
+  return (
+    <Card className="flex flex-col gap-2 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{ALERT_LABELS[kind]}</p>
+          <p className="text-sm text-muted-foreground">{description}</p>
+          {enabled && !canSend && <p className="mt-1 text-xs text-amber-700">카카오 연결이 안 돼 있어서 아직 안 가요.</p>}
+        </div>
+        <fetcher.Form method="post" className="shrink-0">
+          <input type="hidden" name="intent" value="setAlert" />
+          <input type="hidden" name="kind" value={kind} />
+          <input type="hidden" name="enabled" value={enabled ? "0" : "1"} />
+          <Button
+            type="submit"
+            variant={enabled ? "default" : "outline"}
+            className="h-11 min-w-16"
+            aria-pressed={enabled}
+            aria-label={`${ALERT_LABELS[kind]} ${enabled ? "끄기" : "켜기"}`}
+          >
+            {enabled ? "켜짐" : "꺼짐"}
+          </Button>
+        </fetcher.Form>
+      </div>
+      {children}
+      {fetcher.data?.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {fetcher.data.error}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+function MonthlyDay({ day }: { day: number }) {
+  const fetcher = useFetcher<ActionResult>();
+  return (
+    <fetcher.Form method="post" className="flex items-center gap-2" key={day}>
+      <input type="hidden" name="intent" value="setMonthlyDay" />
+      <label htmlFor="monthly-day" className="text-sm text-muted-foreground">
+        매달
+      </label>
+      <Input
+        id="monthly-day"
+        name="day"
+        type="number"
+        inputMode="numeric"
+        min={1}
+        max={31}
+        defaultValue={day}
+        className="h-11 w-20"
+      />
+      <span className="text-sm text-muted-foreground">일</span>
+      <Button type="submit" variant="outline" className="h-11" disabled={fetcher.state !== "idle"}>
+        날짜 저장
+      </Button>
+      {fetcher.data?.error && (
+        <p role="alert" className="text-sm text-destructive">
+          {fetcher.data.error}
+        </p>
+      )}
+    </fetcher.Form>
   );
 }

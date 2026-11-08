@@ -44,6 +44,11 @@
 			"bucket_name": "promo-photos"
 		}
 	],
+	// Kakao alerts (UTC; KST = UTC+9). Keep in sync with CRONS in app/kakao/alerts.server.ts.
+	// 14:20 UTC = 23:20 KST 발주 알림; 01:00 UTC = 10:00 KST 홍보글 알림 (sends on her chosen day only).
+	"triggers": {
+		"crons": ["20 14 * * *", "0 1 * * *"]
+	},
 	"workflows": [
 		{
 			"name": "generate-post",

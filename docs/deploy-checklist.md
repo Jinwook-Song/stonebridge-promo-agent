@@ -23,6 +23,7 @@
   - `SESSION_SECRET` — 32자 이상 (`openssl rand -base64 48`)
   - `OWNER_INITIAL_PASSWORD` — 8자 이상, 사장님께 따로 전달
   - `IMAGE_URL_SECRET` — 32자 이상 (`openssl rand -base64 48`)
+- [ ] (선택) 카톡 알림 키 2개: `KAKAO_REST_KEY`, `KAKAO_CLIENT_SECRET`. 없어도 배포는 되고 알림만 꺼진다. 콘솔 설정과 연결 순서: [kakao-setup.md](kakao-setup.md)
 - [ ] 배포: `npm run deploy`
 
 ## 4. 예시 글 넣기 (한 번만)
