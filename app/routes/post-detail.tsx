@@ -41,7 +41,7 @@ export async function loader({ params }: Route.LoaderArgs) {
   return { ...view, fixed };
 }
 
-export async function action({ request, params }: Route.ActionArgs): Promise<DraftActionResult> {
+export async function action({ request, params }: Route.ActionArgs) {
   const db = getDb(env.DB);
   const id = postIdOf(params);
   const form = await request.formData();
@@ -55,13 +55,14 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Dra
   const now = new Date();
 
   const saveEdit = async () => {
-    if (!channel) throw new DomainError("INVALID_INPUT", "잘못된 요청입니다.");
+    const body = str("body");
+    if (!channel || body === undefined) throw new DomainError("INVALID_INPUT", "잘못된 요청입니다.");
     const hashtags = str("hashtags");
     await saveDraftEdit(
       db,
       id,
       channel,
-      { title: str("title"), body: str("body") ?? "", hashtags: hashtags === undefined ? undefined : parseHashtags(hashtags) },
+      { title: str("title"), body, hashtags: hashtags === undefined ? undefined : parseHashtags(hashtags) },
       now,
     );
   };
@@ -92,13 +93,16 @@ export async function action({ request, params }: Route.ActionArgs): Promise<Dra
         await clearPostError(db, id);
         break;
       default:
-        return { error: "잘못된 요청입니다.", intent };
+        return data<DraftActionResult>({ error: "잘못된 요청입니다.", intent }, { status: 400 });
     }
   } catch (e) {
-    if (e instanceof DomainError) return { error: e.message, intent, channel };
+    if (e instanceof DomainError) {
+      const result: DraftActionResult = { error: e.message, intent, channel };
+      return e.code === "INVALID_INPUT" ? data(result, { status: 400 }) : result;
+    }
     throw e;
   }
-  return { ok: true, intent, channel };
+  return { ok: true, intent, channel } satisfies DraftActionResult;
 }
 
 export default function PostDetail({ loaderData }: Route.ComponentProps) {
@@ -236,6 +240,7 @@ function ChannelTabs({
             <TabsContent key={c} value={c} forceMount className="data-[state=inactive]:hidden">
               {draft ? (
                 <ChannelEditor
+                  postId={postId}
                   channel={c}
                   draft={draft}
                   post={post}

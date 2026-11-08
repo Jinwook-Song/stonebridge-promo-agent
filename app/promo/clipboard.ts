@@ -1,24 +1,26 @@
 /**
- * Copies text from a tap handler. The Clipboard API first; older iOS Safari (and http on a LAN
- * address, where the API is missing) falls back to selecting a hidden textarea. Call it before
- * any await in the handler, or Safari no longer counts it as a user gesture.
+ * Copies text from a tap handler; call it before any await so the browser still counts the tap.
+ * With the Clipboard API it uses writeText and reports a rejection as false (an execCommand
+ * after an await would no longer be inside the tap). Without it (older iOS Safari, plain http
+ * on a LAN address) it selects a hidden textarea and runs execCommand("copy") synchronously.
  */
-export async function copyText(text: string): Promise<boolean> {
+export function copyText(text: string): Promise<boolean> {
   if (navigator.clipboard?.writeText && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
-      // Fall through to the legacy path.
-    }
+    return navigator.clipboard.writeText(text).then(
+      () => true,
+      () => false,
+    );
   }
+  return Promise.resolve(legacyCopy(text));
+}
+
+function legacyCopy(text: string): boolean {
   const area = document.createElement("textarea");
   area.value = text;
   area.setAttribute("readonly", "");
   // 16px so iOS does not zoom; off-screen but still selectable.
   Object.assign(area.style, { position: "fixed", top: "0", left: "-9999px", fontSize: "16px", opacity: "0" });
   document.body.appendChild(area);
-  const active = document.activeElement as HTMLElement | null;
   area.focus();
   area.select();
   area.setSelectionRange(0, text.length);
@@ -28,7 +30,7 @@ export async function copyText(text: string): Promise<boolean> {
   } catch {
     ok = false;
   }
+  // Focus is not handed back: on iOS that would pop the keyboard up again.
   area.remove();
-  active?.focus?.({ preventScroll: true });
   return ok;
 }

@@ -18,6 +18,10 @@ export const MAX_PHOTOS = 8;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 export const MAX_MEMO_CHARS = 500;
 
+/** Result-screen edit limits, shared by the editor and saveDraftEdit. */
+export const MAX_TITLE_CHARS = 200;
+export const MAX_BODY_CHARS = 10_000;
+
 /** Display labels, shared by the UI and the prompt. Keep this file free of server-only imports. */
 export const KIND_LABELS: Record<PostKind, string> = {
   case: "단체 주문 사례",

@@ -7,6 +7,7 @@ import { editRatio } from "../app/promo/edit-ratio";
 import { listExamples } from "../app/promo/examples.server";
 import { getPost, listPosts } from "../app/promo/posts.server";
 import { loader as statusLoader } from "../app/routes/api.post-status";
+import { action as detailAction } from "../app/routes/post-detail";
 import { getDb } from "../app/server/db";
 import { DomainError } from "../app/server/errors";
 
@@ -109,6 +110,16 @@ describe("saveDraftEdit", () => {
     expect(await versions("blog")).toHaveLength(1);
   });
 
+  it("rejects a title over 200 or a body over 10,000 characters", async () => {
+    await expect(saveDraftEdit(db, postId, "blog", { title: "가".repeat(201), body: "x" }, T1)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+    await expect(saveDraftEdit(db, postId, "blog", { body: "가".repeat(10_001) }, T1)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+    expect(await saveDraftEdit(db, postId, "blog", { title: "가".repeat(200), body: "가".repeat(10_000) }, T1)).toBe(2);
+  });
+
   it("is NOT_FOUND for a channel with no draft or an unknown post", async () => {
     const empty = await insertPost();
     await expect(saveDraftEdit(db, empty, "blog", { body: "x" }, T1)).rejects.toMatchObject({ code: "NOT_FOUND" });
@@ -161,6 +172,36 @@ describe("confirmDraft", () => {
     const ex = await listExamples(db);
     expect(ex).toHaveLength(1);
     expect(ex[0]).toMatchObject({ channel: "daangn", title: "당근 제목", body: "당근 본문", source: "owner_final" });
+  });
+
+  it("re-confirming after an edit updates the one example for that post and channel", async () => {
+    await confirmDraft(db, postId, "blog", T0);
+    await saveDraftEdit(db, postId, "blog", { title: "고친 제목", body: EDITED }, T1);
+    await confirmDraft(db, postId, "blog", T1);
+    await confirmDraft(db, postId, "daangn", T1);
+    const ex = await listExamples(db);
+    const blog = ex.filter((e) => e.channel === "blog");
+    expect(blog).toHaveLength(1);
+    expect(blog[0]).toMatchObject({ title: "고친 제목", body: EDITED, kind: "case", source: "owner_final" });
+    expect(ex.filter((e) => e.channel === "daangn")).toHaveLength(1);
+    const [row] = await db.select().from(examples).where(eq(examples.channel, "blog"));
+    expect(row.sourceUrl).toBe(`/posts/${postId}#blog`);
+  });
+
+  it("keeps the owner's on/off choice for that example when re-confirming", async () => {
+    await confirmDraft(db, postId, "place", T0);
+    await db.update(examples).set({ enabled: false });
+    await saveDraftEdit(db, postId, "place", { body: "다시 고친 본문" }, T1);
+    await confirmDraft(db, postId, "place", T1);
+    const ex = await listExamples(db);
+    expect(ex).toHaveLength(1);
+    expect(ex[0]).toMatchObject({ body: "다시 고친 본문", enabled: false });
+  });
+
+  it("two confirms of different versions at once still leave one example", async () => {
+    await saveDraftEdit(db, postId, "blog", { body: EDITED }, T1);
+    await Promise.all([confirmDraft(db, postId, "blog", T1), confirmDraft(db, postId, "blog", T1)]);
+    expect(await listExamples(db)).toHaveLength(1);
   });
 
   it("is BUSY while that channel is being rewritten and NOT_FOUND without a draft", async () => {
@@ -221,5 +262,34 @@ describe("listPosts confirmedCount", () => {
     // Editing after confirming makes a new, unconfirmed latest version.
     await saveDraftEdit(db, postId, "place", { body: "고친 플레이스" }, T1);
     expect((await listPosts(db))[0].confirmedCount).toBe(1);
+  });
+});
+
+describe("post-detail action", () => {
+  const post = (fields: Record<string, string>) => {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.set(k, v);
+    return detailAction({
+      request: new Request(`http://localhost/posts/${postId}`, { method: "POST", body: form }),
+      params: { id: String(postId) },
+    } as never);
+  };
+  const statusOf = (res: unknown) => (res as { init?: { status?: number } }).init?.status ?? 200;
+
+  it("400s a save without a body or with an over-long body, and stores nothing", async () => {
+    const missing = await post({ intent: "save", channel: "blog" });
+    expect(statusOf(missing)).toBe(400);
+    const tooLong = await post({ intent: "save", channel: "blog", body: "가".repeat(10_001) });
+    expect(statusOf(tooLong)).toBe(400);
+    expect((tooLong as { data: { error: string } }).data.error).toMatch(/10,000자/);
+    expect(await versions("blog")).toHaveLength(1);
+  });
+
+  it("saves and confirms the text sent with 확정 in one request", async () => {
+    const res = await post({ intent: "confirm", channel: "blog", title: "블로그 제목", body: EDITED });
+    expect(res).toMatchObject({ ok: true, intent: "confirm", channel: "blog" });
+    const blog = (await getPost(db, postId))!.drafts.blog!;
+    expect(blog).toMatchObject({ version: 2, body: EDITED, editRatio: 0.25 });
+    expect(blog.confirmedAt).not.toBeNull();
   });
 });

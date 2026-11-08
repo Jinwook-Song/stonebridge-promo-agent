@@ -1,6 +1,6 @@
 import { CheckIcon, CopyIcon, LoaderCircleIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import { useFetcher } from "react-router";
+import { useFetcher, useRevalidator } from "react-router";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -10,7 +10,7 @@ import { copyText } from "../clipboard";
 import { composeCopy, formatHashtags, HAS_TITLE, parseHashtags, warningsFor } from "../draft-text";
 import type { FixedTexts } from "../fixed-text";
 import type { DraftRow, PostView } from "../posts.server";
-import { CHANNEL_LABELS, type Channel } from "../types";
+import { CHANNEL_LABELS, MAX_BODY_CHARS, MAX_TITLE_CHARS, type Channel } from "../types";
 import { PhotoStrip } from "./PhotoStrip";
 
 /** What the post-detail action returns for a channel request. */
@@ -40,6 +40,21 @@ function formDataFor(intent: string, channel: Channel, f: Fields, extra: Record<
   return data;
 }
 
+/**
+ * Save that outlives the page: leaving (swipe back, link tap, closing the tab) or hiding it
+ * (switching to Naver) can unmount the editor with no blur, and a fetcher submit started from
+ * a cleanup is dropped. Multipart, not urlencoded: Korean stays 3 bytes a character, well under
+ * keepalive's 64 KB for a 10,000-character body. A racing normal save with the same text is a
+ * no-op on the server.
+ */
+function keepaliveSave(postId: number, channel: Channel, f: Fields): Promise<unknown> {
+  const body = new FormData();
+  for (const [key, value] of Object.entries(formDataFor("save", channel, f))) body.set(key, value);
+  return fetch(`/posts/${postId}`, { method: "POST", body, keepalive: true, credentials: "same-origin" }).catch(
+    () => {},
+  );
+}
+
 /** Grows with its content so the owner scrolls the page, not a box inside it. */
 function useAutoGrow(value: string, visible: boolean) {
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -53,6 +68,7 @@ function useAutoGrow(value: string, visible: boolean) {
 }
 
 export function ChannelEditor({
+  postId,
   channel,
   draft,
   post,
@@ -63,6 +79,7 @@ export function ChannelEditor({
   generating,
   onToast,
 }: {
+  postId: number;
   channel: Channel;
   draft: DraftRow;
   post: { memo: string; privateCustomer: boolean; attachPrices: boolean };
@@ -77,11 +94,14 @@ export function ChannelEditor({
   onToast: (message: string) => void;
 }) {
   const fetcher = useFetcher<DraftActionResult>();
+  const { revalidate } = useRevalidator();
   const server = fieldsOf(draft);
   const [local, setLocal] = useState<Fields>(server);
   const [rewriteOpen, setRewriteOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [savedOnce, setSavedOnce] = useState(false);
+  // The last request's error stays until she types, sends something new, or the status moves on.
+  const [errorCleared, setErrorCleared] = useState(false);
   const seenDraftId = useRef(draft.id);
   const bodyRef = useAutoGrow(local.body, visible);
 
@@ -98,52 +118,79 @@ export function ChannelEditor({
 
   const pendingIntent = fetcher.state !== "idle" ? fetcher.formData?.get("intent") : null;
   const dirty = !sameFields(channel, local, server);
-  const locked = rewriting;
+  // Locked from the tap on 보내기, not only once the reloaded page says "rewriting": text typed
+  // in between would be replaced by the rewrite.
+  const locked = rewriting || pendingIntent === "rewrite";
   const { full, tail } = composeCopy(channel, toDraftFields(local), fixed, post.attachPrices);
   const warnings = warningsFor(toDraftFields(local), post, fixed);
   const confirmed = !dirty && draft.confirmedAt !== null;
-  const error = fetcher.state === "idle" && fetcher.data?.error ? fetcher.data.error : null;
+  const error = fetcher.state === "idle" && !errorCleared && fetcher.data?.error ? fetcher.data.error : null;
 
-  // Latest values for the page-hide save below without re-subscribing on every keystroke.
-  const saveRef = useRef<() => void>(() => {});
-  saveRef.current = () => {
+  useEffect(() => setErrorCleared(true), [generating]);
+
+  // A successful 다시 쓰기 closes its box; a refused one (BUSY) keeps her instruction.
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.ok && fetcher.data.intent === "rewrite") {
+      setRewriteOpen(false);
+      setInstruction("");
+    }
+  }, [fetcher.state, fetcher.data]);
+
+  function submit(data: Record<string, string>) {
+    setErrorCleared(false);
+    void fetcher.submit(data, { method: "post" });
+  }
+
+  // Latest values for the listeners below without re-subscribing on every keystroke.
+  const saveRef = useRef<(mode: "fetcher" | "keepalive") => Promise<unknown> | void>(() => {});
+  saveRef.current = (mode) => {
     if (!dirty || locked) return;
+    if (mode === "keepalive") return keepaliveSave(postId, channel, local);
     setSavedOnce(true);
-    void fetcher.submit(formDataFor("save", channel, local), { method: "post" });
+    submit(formDataFor("save", channel, local));
   };
 
-  // Switching to Naver right after typing may not blur the field first.
   useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState === "hidden") saveRef.current();
+    // Switching to Naver right after typing may not blur the field first. The page stays
+    // alive, so refresh once the save lands to show it as saved.
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") return;
+      const saving = saveRef.current("keepalive");
+      if (saving) void saving.then(() => revalidate());
     };
-    document.addEventListener("visibilitychange", onHide);
-    return () => document.removeEventListener("visibilitychange", onHide);
-  }, []);
+    const onPageHide = () => void saveRef.current("keepalive");
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+      // Leaving the page inside the app (back swipe, a link) unmounts with no blur.
+      void saveRef.current("keepalive");
+    };
+  }, [revalidate]);
 
   function onCopy() {
     // Copy first, synchronously inside the tap, then save whatever is unsaved.
     void copyText(full).then((ok) =>
-      onToast(ok ? "복사했어요" : "복사하지 못했어요. 아래 '복사될 글 전체'를 길게 눌러 복사해 주세요."),
+      onToast(ok ? "복사했어요" : "복사하지 못했어요. 아래 '복사될 글 전체 보기'를 열고 길게 눌러 복사해 주세요."),
     );
-    saveRef.current();
+    void saveRef.current("fetcher");
   }
 
   function onConfirm() {
-    void fetcher.submit(formDataFor("confirm", channel, local), { method: "post" });
+    submit(formDataFor("confirm", channel, local));
   }
 
   function onRewrite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void fetcher.submit(formDataFor("rewrite", channel, local, { instruction: instruction.trim() }), {
-      method: "post",
-    });
-    setRewriteOpen(false);
-    setInstruction("");
+    submit(formDataFor("rewrite", channel, local, { instruction: instruction.trim() }));
   }
 
-  const set = (patch: Partial<Fields>) => setLocal((prev) => ({ ...prev, ...patch }));
-  const onBlur = () => saveRef.current();
+  const set = (patch: Partial<Fields>) => {
+    setErrorCleared(true);
+    setLocal((prev) => ({ ...prev, ...patch }));
+  };
+  const onBlur = () => void saveRef.current("fetcher");
   const label = CHANNEL_LABELS[channel];
 
   return (
@@ -171,6 +218,7 @@ export function ChannelEditor({
           <Input
             id={`${channel}-title`}
             value={local.title}
+            maxLength={MAX_TITLE_CHARS}
             readOnly={locked}
             onChange={(e) => set({ title: e.target.value })}
             onBlur={onBlur}
@@ -184,6 +232,7 @@ export function ChannelEditor({
           ref={bodyRef}
           id={`${channel}-body`}
           value={local.body}
+          maxLength={MAX_BODY_CHARS}
           readOnly={locked}
           onChange={(e) => set({ body: e.target.value })}
           onBlur={onBlur}

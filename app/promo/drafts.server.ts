@@ -1,12 +1,11 @@
 import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
-import { drafts, posts } from "../../database/schema";
+import { drafts, examples, posts } from "../../database/schema";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
 import { HAS_TITLE, normalizeHashtags } from "./draft-text";
 import { editRatio } from "./edit-ratio";
-import { addExample } from "./examples.server";
 import type { DraftRow, PostRow } from "./posts.server";
-import type { Channel } from "./types";
+import { MAX_BODY_CHARS, MAX_TITLE_CHARS, type Channel } from "./types";
 
 export type DraftPatch = { title?: string | null; body: string; hashtags?: string[] | null };
 
@@ -57,6 +56,12 @@ export async function saveDraftEdit(
   patch: DraftPatch,
   now: Date,
 ): Promise<number> {
+  if (patch.body.length > MAX_BODY_CHARS) {
+    throw new DomainError("INVALID_INPUT", `본문은 ${MAX_BODY_CHARS.toLocaleString("en-US")}자까지 쓸 수 있어요.`);
+  }
+  if ((patch.title ?? "").length > MAX_TITLE_CHARS) {
+    throw new DomainError("INVALID_INPUT", `제목은 ${MAX_TITLE_CHARS}자까지 쓸 수 있어요.`);
+  }
   // Retried when another save (a blur autosave racing 확정) lands first: compare against that one.
   for (let attempt = 0; attempt < 3; attempt++) {
     const { latest } = await loadForWrite(db, postId, channel);
@@ -135,11 +140,36 @@ export async function confirmDraft(db: Db, postId: number, channel: Channel, now
     .returning({ id: drafts.id });
   if (claimed.length === 0) return;
 
-  await addExample(
-    db,
-    { channel, kind: post.kind, title: latest.title, body: latest.body, source: "owner_final" },
-    now,
-  );
+  // One example per post and channel, keyed by its source_url: re-confirming after an edit
+  // or a rewrite replaces the text instead of adding a near-copy that would crowd the few-shot
+  // slots. The insert is conditional and the batch is one transaction, so a double tap cannot
+  // create two; `enabled` (the owner's choice in 설정) is left as it is.
+  const sourceUrl = exampleUrl(postId, channel);
+  const values = { channel, kind: post.kind, title: latest.title, body: latest.body };
+  await db.batch([
+    db.insert(examples).select(
+      db
+        .select({
+          id: sql<number>`NULL`.as("id"),
+          channel: sql<Channel>`${channel}`.as("channel"),
+          kind: sql<string>`${post.kind}`.as("kind"),
+          title: sql<string | null>`${latest.title}`.as("title"),
+          body: sql<string>`${latest.body}`.as("body"),
+          source: sql<"owner_final">`'owner_final'`.as("source"),
+          enabled: sql<number>`1`.as("enabled"),
+          sourceUrl: sql<string>`${sourceUrl}`.as("source_url"),
+          createdAt: sql<string>`${now.toISOString()}`.as("created_at"),
+        })
+        .from(sql`(SELECT 1)`)
+        .where(sql`NOT EXISTS (SELECT 1 FROM ${examples} WHERE ${examples.sourceUrl} = ${sourceUrl})`),
+    ),
+    db.update(examples).set(values).where(eq(examples.sourceUrl, sourceUrl)),
+  ]);
+}
+
+/** Where an owner_final example came from: the post and tab it was confirmed on. */
+export function exampleUrl(postId: number, channel: Channel): string {
+  return `/posts/${postId}#${channel}`;
 }
 
 /** Dismisses a leftover error (a failed one-channel rewrite). A failed post keeps its reason. */
