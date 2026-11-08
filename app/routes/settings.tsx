@@ -7,7 +7,6 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Field } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
-import { DEFAULT_CHANNEL_RULES, DEFAULT_VOICE_RULES } from "../promo/default-rules";
 import {
   listExamples,
   setExampleEnabled,
@@ -19,7 +18,8 @@ import { CHANNEL_LABELS, KIND_LABELS, POST_KINDS, type Channel, type PostKind } 
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
 
-type ActionResult = { ok?: boolean; error?: string } | undefined;
+/** `savedAt` (saveSettings only) remounts the form so every box shows what is now in effect. */
+type ActionResult = { ok?: boolean; error?: string; savedAt?: number } | undefined;
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "설정 · 스톤브릿지 홍보글" }];
@@ -44,15 +44,16 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
   try {
     switch (str("intent")) {
       case "saveSettings":
+        // saveSettings trims, and drops a box left blank or equal to its default (so a blank
+        // rules box means "use the default", never "no rules").
         await saveSettings(db, {
-          footerBlog: str("footerBlog").trim(),
-          footerShort: str("footerShort").trim(),
-          priceTable: str("priceTable").trim(),
-          // A blank rules box would silently send the model no rules at all.
-          voiceRules: str("voiceRules").trim() || DEFAULT_VOICE_RULES,
-          channelRules: str("channelRules").trim() || DEFAULT_CHANNEL_RULES,
+          footerBlog: str("footerBlog"),
+          footerShort: str("footerShort"),
+          priceTable: str("priceTable"),
+          voiceRules: str("voiceRules"),
+          channelRules: str("channelRules"),
         });
-        break;
+        return { ok: true, savedAt: Date.now() };
       case "setExampleEnabled":
         await setExampleEnabled(db, Number(str("id")), str("enabled") === "1");
         break;
@@ -103,7 +104,10 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
     <div className="flex flex-col gap-6">
       <h1 className="text-lg font-semibold">설정</h1>
 
-      <Form method="post" className="flex flex-col gap-4">
+      {/* The boxes are uncontrolled; after a save, remount them on the reloaded settings (a blanked
+          rules box comes back showing the default it now uses). Example toggles use fetchers,
+          so they never reset what she is typing here. */}
+      <Form key={actionData?.savedAt ?? 0} method="post" className="flex flex-col gap-4">
         <input type="hidden" name="intent" value="saveSettings" />
         <SettingField name="footerBlog" label="꼬리말 (블로그)" value={settings.footerBlog} rows={4} warnEmpty />
         <SettingField name="footerShort" label="꼬리말 (짧은 판)" value={settings.footerShort} rows={3} warnEmpty />

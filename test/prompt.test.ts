@@ -12,6 +12,7 @@ import {
   type ImageSource,
   pickExampleSet,
 } from "../app/promo/prompt";
+import { DEFAULT_CHANNEL_RULES } from "../app/promo/default-rules";
 import type { PromoSettings } from "../app/promo/settings.server";
 
 const S: PromoSettings = {
@@ -143,6 +144,36 @@ describe("buildSystem", () => {
     const out = buildSystem(S, EX);
     expect(out).toContain("저희");
     expect(out).toContain("- 꼬리말(배송 정책, 주소, 영업시간, 연락처)과 가격표는 쓰지 않는다. 프로그램이 따로 붙인다.");
+  });
+});
+
+describe("role and default rules", () => {
+  it("the role paragraph uses the same plain ~한다 register as the rules", () => {
+    const role = buildSystem(S, EX).split("\n\n")[0];
+    expect(role.startsWith("당신은 실제로 운영 중인 카페의 사장님이 되어 소식 글을 쓴다.")).toBe(true);
+    expect(role).not.toMatch(/니다[.!]/);
+    for (const sentence of [
+      "글은 모두 사장님이 직접 쓴 것처럼 1인칭(\"저희\")으로 쓴다.",
+      "네 채널(블로그, 인스타그램, 당근, 플레이스)에 같은 내용을 쓰되 채널마다 말투와 분량을 맞춘다.",
+      "아래 예시 글의 말투와 구성을 가깝게 따라 하고, 일반적인 글쓰기 투로 바꾸지 않는다.",
+    ]) {
+      expect(role).toContain(sentence);
+    }
+  });
+
+  it("the 절대 규칙 block is unchanged", () => {
+    expect(buildSystem(S, EX)).toContain(`## 절대 규칙
+- 메모, 사진, 사장님이 준 정보에 없는 숫자·가격·날짜·기관 이름·사람 이름은 쓰지 않는다. 모르면 그 문장을 빼거나 "문의 주세요"로 쓴다.
+- 꼬리말(배송 정책, 주소, 영업시간, 연락처)과 가격표는 쓰지 않는다. 프로그램이 따로 붙인다.
+- 일반 이모지(😊🎉👍 등)는 쓰지 않는다. 얼굴 문자만 쓴다.
+- 개인 고객 주문이면 이름·연락처·사는 곳을 쓰지 않는다.`);
+  });
+
+  it("the default blog title rule covers every post kind, 기타 included", () => {
+    const titleLine = DEFAULT_CHANNEL_RULES.split("\n").find((l) => l.startsWith("- 제목:"))!;
+    expect(titleLine).toContain("사례 = ");
+    expect(titleLine).toContain("상품 = ");
+    expect(titleLine).toContain("기타 = `가게 이름 + 주제`");
   });
 });
 

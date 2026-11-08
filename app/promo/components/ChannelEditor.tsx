@@ -138,7 +138,8 @@ export function ChannelEditor({
 
   function submit(data: Record<string, string>) {
     setErrorCleared(false);
-    void fetcher.submit(data, { method: "post" });
+    // Always this editor's post, never whatever page the router is on now.
+    void fetcher.submit(data, { method: "post", action: `/posts/${postId}` });
   }
 
   // Latest values for the listeners below without re-subscribing on every keystroke.

@@ -7,12 +7,13 @@ import {
   makeGenDeps,
   runGeneration,
   runRewrite,
+  STEP_RETRY_DELAY_SECONDS,
+  STEP_RETRY_LIMIT,
+  STEP_TIMEOUT_MINUTES,
   type GenerateParams,
   type RunRef,
 } from "../app/promo/generate.server";
 import { getDb } from "../app/server/db";
-
-const RETRY_LIMIT = 2;
 
 /**
  * Runs one generation (all four channels, or one channel's rewrite) apart from the HTTP request,
@@ -27,9 +28,13 @@ export class GeneratePostWorkflow extends WorkflowEntrypoint<Env, GenerateParams
     try {
       await step.do(
         "generate",
-        { retries: { limit: RETRY_LIMIT, delay: "10 seconds", backoff: "exponential" }, timeout: "10 minutes" },
+        {
+          // Timing lives next to STALE_CLAIM_MS, which is derived from it.
+          retries: { limit: STEP_RETRY_LIMIT, delay: `${STEP_RETRY_DELAY_SECONDS} seconds`, backoff: "exponential" },
+          timeout: `${STEP_TIMEOUT_MINUTES} minutes`,
+        },
         async (ctx) => {
-          const opts = { final: isFinalAttempt(ctx.attempt, RETRY_LIMIT) };
+          const opts = { final: isFinalAttempt(ctx.attempt, STEP_RETRY_LIMIT) };
           const deps = makeGenDeps(this.env, db);
           try {
             if (channel) await runRewrite(deps, run, channel, instruction ?? "", opts);

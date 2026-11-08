@@ -13,15 +13,20 @@ const MAX_TOKENS = 64000;
 // forwards unknown body fields as-is.
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
-export type GenerationFailure = "refusal" | "max_tokens" | "invalid_output";
+export type GenerationFailure = "refusal" | "max_tokens" | "invalid_output" | "public_origin";
 
 const FAILURE_MESSAGES: Record<GenerationFailure, string> = {
   refusal: "AI가 이 요청을 거절했어요. 메모를 바꿔 다시 시도해 주세요.",
   max_tokens: "글이 너무 길어져서 끝까지 쓰지 못했어요. 다시 시도해 주세요.",
   invalid_output: "AI 답을 읽지 못했어요. 다시 시도해 주세요.",
+  // Deploy setup, not the owner's input: retrying cannot fix it.
+  public_origin: "앱 주소 설정(PUBLIC_ORIGIN)이 안 되어 있어요. 관리자에게 알려 주세요.",
 };
 
-/** A model answer we cannot use. Retrying the same request will not help, so it is not retried. */
+/**
+ * A model answer we cannot use, or a setup problem found before the call. Retrying the same
+ * request will not help, so it is not retried.
+ */
 export class GenerationError extends Error {
   constructor(public readonly reason: GenerationFailure) {
     super(FAILURE_MESSAGES[reason]);
@@ -38,13 +43,13 @@ export function permanentApiFailure(e: unknown): { message: string } | null {
   switch (e.status) {
     case 401:
     case 403:
+    // Wrong model id or endpoint: a setup problem, like a bad key.
+    case 404:
       return { message: "AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요." };
     case 400:
     case 413:
     case 422:
       return { message: "AI가 요청을 처리하지 못했어요. 사진 수를 줄이거나 메모를 바꿔 다시 시도해 주세요." };
-    case 404:
-      return { message: "잠시 후 다시 시도해 주세요." };
     default:
       return null;
   }
@@ -77,6 +82,9 @@ export function makeClaudeCalls(apiKey: string): { drafts: DraftCall; rewrite: R
       messages: [{ role: "user", content: req.user }],
     };
     const message = await client.beta.messages.stream(params).finalMessage();
+    // Numbers only (no text): shows in `wrangler tail` / Workers Logs, e.g. to check that a
+    // rewrite reads the system prompt from cache (docs/deploy-checklist.md).
+    console.info("claude usage", { stop_reason: message.stop_reason, ...message.usage });
 
     // Check why it stopped before reading any content: a refusal or a cut-off leaves
     // partial (or no) text.

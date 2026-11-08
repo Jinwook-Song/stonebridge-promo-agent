@@ -16,7 +16,11 @@ import {
   makePhotoSource,
   runGeneration,
   runRewrite,
+  STALE_CLAIM_MS,
   startGeneration,
+  STEP_RETRY_DELAY_SECONDS,
+  STEP_RETRY_LIMIT,
+  STEP_TIMEOUT_MINUTES,
   type GenDeps,
   type RunRef,
 } from "../app/promo/generate.server";
@@ -195,6 +199,24 @@ describe("runGeneration", () => {
   });
 });
 
+describe("runGeneration with an unset PUBLIC_ORIGIN", () => {
+  it("fails right away with the admin message, without calling Claude or asking for a retry", async () => {
+    await db.insert(photos).values([{ postId, r2Key: `posts/${postId}/1.jpg`, position: 1, width: 1, height: 1 }]);
+    const drafts = vi.fn(okDrafts);
+    const photoSource = makePhotoSource(
+      { PUBLIC_ORIGIN: "https://stonebridge-promo.example.workers.dev", IMAGE_URL_SECRET: env.IMAGE_URL_SECRET, PHOTOS: env.PHOTOS },
+      () => T0,
+    );
+    // Resolves (no throw), so the Workflow step does not retry it.
+    await runGeneration(deps({ drafts, photoSource }), run, { final: false });
+    expect(drafts).not.toHaveBeenCalled();
+    expect(await row()).toMatchObject({
+      status: "failed",
+      error: "앱 주소 설정(PUBLIC_ORIGIN)이 안 되어 있어요. 관리자에게 알려 주세요.",
+    });
+  });
+});
+
 describe("runGeneration ownership and notes", () => {
   it("stores photo notes by position, ignores out-of-range n, and clears notes it does not mention", async () => {
     await db.insert(photos).values([
@@ -323,7 +345,8 @@ describe("permanentApiFailure", () => {
   const apiError = (status: number) => Anthropic.APIError.generate(status, { type: "error" }, "x", new Headers());
 
   it("treats key and request problems as permanent, with Korean reasons", () => {
-    for (const status of [401, 403]) {
+    // 404 = wrong model id or endpoint: a setup problem, like a bad key.
+    for (const status of [401, 403, 404]) {
       expect(permanentApiFailure(apiError(status))?.message).toBe("AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요.");
     }
     for (const status of [400, 413, 422]) {
@@ -331,7 +354,6 @@ describe("permanentApiFailure", () => {
         "AI가 요청을 처리하지 못했어요. 사진 수를 줄이거나 메모를 바꿔 다시 시도해 주세요.",
       );
     }
-    expect(permanentApiFailure(apiError(404))?.message).toBe("잠시 후 다시 시도해 주세요.");
   });
 
   it("leaves timeouts, conflicts, rate limits, server errors and non-API errors to retries", () => {
@@ -399,6 +421,25 @@ describe("runRewrite", () => {
     const v = await getPost(db, postId);
     // Titles and hashtags are kept only where the channel has them.
     expect(v!.drafts.place!.title).toBeNull();
+  });
+
+  it("an instagram rewrite keeps the current hashtags unless the model gives new ones", async () => {
+    await runGeneration(deps(), run);
+    const tagsAfter = async (hashtags: string[] | null) => {
+      await claim("instagram");
+      const output: ChannelRewrite = { title: null, body: "더 짧게 썼어요.", hashtags };
+      await runRewrite(deps({ rewrite: async () => ({ output, inputTokens: 1, outputTokens: 1 }) }), run, "instagram", "더 짧게");
+      const ig = (await getPost(db, postId))!.drafts.instagram!;
+      expect(ig.body).toBe("더 짧게 썼어요.");
+      return JSON.parse(ig.hashtags!);
+    };
+    // null, an empty list, or tags that are all blank: "더 짧게" must not wipe her tags.
+    expect(await tagsAfter(null)).toEqual(["마카롱", "단체주문"]);
+    expect(await tagsAfter([])).toEqual(["마카롱", "단체주문"]);
+    expect(await tagsAfter(["#", " "])).toEqual(["마카롱", "단체주문"]);
+    // New tags replace them.
+    expect(await tagsAfter(["#구리카페", "선물"])).toEqual(["구리카페", "선물"]);
+    expect((await getPost(db, postId))!.drafts.instagram!.version).toBe(5);
   });
 
   it("on refusal keeps the drafts, goes back to ready with the reason, clears the rewriting channel", async () => {
@@ -514,20 +555,32 @@ describe("startGeneration", () => {
     expect(await row(id)).toMatchObject({ workflowId: `post-${id}-${T0.getTime()}`, generationStartedAt: T0.toISOString() });
   });
 
-  it("takes over a claim older than 40 minutes, not a younger one", async () => {
+  it("takes over a claim older than STALE_CLAIM_MS, not a younger one", async () => {
     const id = await insertPost("draft");
     const e = fakeEnv();
-    const after = (min: number) => new Date(T0.getTime() + min * 60_000);
+    const at = (ms: number) => new Date(T0.getTime() + ms);
     await startGeneration(e, db, id, {}, T0);
-    await expect(startGeneration(e, db, id, {}, after(39))).rejects.toThrow("이미 만드는 중");
-    await startGeneration(e, db, id, { channel: "blog" }, after(41));
+    await expect(startGeneration(e, db, id, {}, at(STALE_CLAIM_MS - 60_000))).rejects.toThrow("이미 만드는 중");
+    const later = at(STALE_CLAIM_MS + 60_000);
+    await startGeneration(e, db, id, { channel: "blog" }, later);
     expect(e.GENERATE.create).toHaveBeenCalledTimes(2);
     expect(await row(id)).toMatchObject({
       status: "generating",
       rewritingChannel: "blog",
-      workflowId: `post-${id}-${after(41).getTime()}`,
-      generationStartedAt: after(41).toISOString(),
+      workflowId: `post-${id}-${later.getTime()}`,
+      generationStartedAt: later.toISOString(),
     });
+  });
+
+  it("a claim outlives every attempt of a run timing out, plus the retry delays", () => {
+    expect(STEP_TIMEOUT_MINUTES).toBe(15);
+    expect(STEP_RETRY_LIMIT).toBe(2);
+    const attempts = STEP_RETRY_LIMIT + 1;
+    // Exponential backoff: 10 s, 20 s, ...
+    const delays = Array.from({ length: STEP_RETRY_LIMIT }, (_, i) => STEP_RETRY_DELAY_SECONDS * 2 ** i * 1000);
+    const worstRun = attempts * STEP_TIMEOUT_MINUTES * 60_000 + delays.reduce((a, b) => a + b, 0);
+    expect(STALE_CLAIM_MS).toBeGreaterThan(worstRun);
+    expect(STALE_CLAIM_MS).toBeGreaterThanOrEqual(50 * 60_000);
   });
 
   it("throws NOT_FOUND for a missing post", async () => {
@@ -552,6 +605,18 @@ describe("makePhotoSource", () => {
     expect(
       await verifyImageSig(key, url.searchParams.get("exp")!, url.searchParams.get("sig")!, env.IMAGE_URL_SECRET, T0),
     ).toBe(true);
+  });
+
+  it("refuses a placeholder or broken https origin with a final, Korean admin message", async () => {
+    for (const origin of ["https://stonebridge-promo.example.workers.dev", "https://example.com", "https://", "https:// bad"]) {
+      const source = makePhotoSource(
+        { PUBLIC_ORIGIN: origin, IMAGE_URL_SECRET: env.IMAGE_URL_SECRET, PHOTOS: env.PHOTOS },
+        () => T0,
+      );
+      const err = await source(key).catch((e) => e);
+      expect(err, origin).toBeInstanceOf(GenerationError);
+      expect(err.message).toBe("앱 주소 설정(PUBLIC_ORIGIN)이 안 되어 있어요. 관리자에게 알려 주세요.");
+    }
   });
 
   it("reads base64 from R2 when the origin is not https (local dev)", async () => {

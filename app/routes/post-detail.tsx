@@ -18,7 +18,7 @@ import { CHANNEL_LABELS, CHANNELS, KIND_LABELS, type Channel } from "../promo/ty
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
 
-const WAITING = "초안을 만드는 중이에요 (1~2분). 화면을 닫아도 계속 만들어요.";
+const WAITING = "초안을 만드는 중이에요. 몇 분 걸릴 수 있어요. 화면을 닫아도 계속 만들어요.";
 const MAX_INSTRUCTION_CHARS = 200;
 
 export function meta({}: Route.MetaArgs) {
@@ -114,15 +114,19 @@ export default function PostDetail({ loaderData }: Route.ComponentProps) {
   const fullWait = generating && (!rewritingChannel || !hasDrafts);
   useStatusPolling(post.id, generating);
 
+  // Keyed by post: going back/forward between two posts reuses this route component, and the
+  // editors seed their text from the first draft they see. A new key unmounts the old post's
+  // editors (their cleanup saves unsaved text to that post) and starts fresh for this one.
   return (
     <div className="flex flex-col gap-4">
       <PostHeader post={post} />
       {fullWait ? (
         <Waiting />
       ) : post.status === "failed" || (post.status === "draft" && !hasDrafts) ? (
-        <StartAgain status={post.status} error={post.error} />
+        <StartAgain key={post.id} status={post.status} error={post.error} />
       ) : (
         <ChannelTabs
+          key={post.id}
           postId={post.id}
           post={post}
           drafts={drafts}
@@ -240,6 +244,7 @@ function ChannelTabs({
             <TabsContent key={c} value={c} forceMount className="data-[state=inactive]:hidden">
               {draft ? (
                 <ChannelEditor
+                  key={`${postId}-${c}`}
                   postId={postId}
                   channel={c}
                   draft={draft}

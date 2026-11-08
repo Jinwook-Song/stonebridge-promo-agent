@@ -16,7 +16,9 @@
 	// Both can be overridden in .dev.vars for local dev. Declared here because with `secrets`
 	// set, .dev.vars keys that are neither secrets nor vars are not loaded.
 	"vars": {
-		// Origin Claude fetches signed photo URLs from. Placeholder until the first deploy (Task 9).
+		// Origin Claude fetches signed photo URLs from. Placeholder until the first deploy (Task 9);
+		// while it is an `example` host, generation fails at once with an admin message
+		// (docs/deploy-checklist.md).
 		// Local dev: http://localhost:5173 (not https, so photos go to Claude as base64).
 		"PUBLIC_ORIGIN": "https://stonebridge-promo.example.workers.dev",
 		// "1" = canned drafts instead of calling Claude. Local dev only.

@@ -69,6 +69,37 @@ describe("settings store", () => {
     expect(await db.select().from(settings).where(eq(settings.key, "footer_blog"))).toEqual([]);
   });
 
+  it("a rules box saved as the default (even with CRLF and padding) stores nothing, so code updates reach it", async () => {
+    await saveSettings(db, { voiceRules: "내 말투", channelRules: "내 채널 규칙" });
+    // Browsers send textarea newlines as CRLF.
+    await saveSettings(db, {
+      voiceRules: `  ${DEFAULT_VOICE_RULES.replace(/\n/g, "\r\n")}\r\n`,
+      channelRules: DEFAULT_CHANNEL_RULES,
+    });
+    const rows = await db.select().from(settings).where(inArray(settings.key, ["voice_rules", "channel_rules"]));
+    expect(rows).toEqual([]);
+    const s = await getSettings(db);
+    expect(s.voiceRules).toBe(DEFAULT_VOICE_RULES);
+    expect(s.channelRules).toBe(DEFAULT_CHANNEL_RULES);
+  });
+
+  it("a blank box goes back to its default (rules) or empty (footers, prices)", async () => {
+    await saveSettings(db, { footerBlog: "A", priceTable: "P", voiceRules: "내 말투", channelRules: "내 채널 규칙" });
+    await saveSettings(db, { footerBlog: "  ", priceTable: "", voiceRules: "\r\n ", channelRules: "" });
+    expect(await db.select().from(settings)).toEqual([]);
+    const s = await getSettings(db);
+    expect([s.footerBlog, s.priceTable]).toEqual(["", ""]);
+    expect(s.voiceRules).toBe(DEFAULT_VOICE_RULES);
+    expect(s.channelRules).toBe(DEFAULT_CHANNEL_RULES);
+  });
+
+  it("stores custom text trimmed, with LF newlines", async () => {
+    await saveSettings(db, { voiceRules: "  첫 줄\r\n둘째 줄\r\n", footerBlog: "주소\r\n전화\n" });
+    const s = await getSettings(db);
+    expect(s.voiceRules).toBe("첫 줄\n둘째 줄");
+    expect(s.footerBlog).toBe("주소\n전화");
+  });
+
   it("never reads or writes the owner password hash", async () => {
     await db.insert(settings).values({ key: "owner_password_hash", value: "hash-secret" });
     await saveSettings(db, { footerBlog: "A" });

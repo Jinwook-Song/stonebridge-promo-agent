@@ -51,8 +51,29 @@ export function isFinalAttempt(attempt: number, retryLimit: number): boolean {
 
 const RETRY_LATER = "잠시 후 다시 시도해 주세요.";
 const START_FAILED = "초안 만들기를 시작하지 못했어요. 잠시 후 다시 시도해 주세요.";
-/** Longer than a whole Workflow run can take (3 attempts x 10 min timeout + retry delays). */
-const STALE_CLAIM_MS = 40 * 60 * 1000;
+
+// ---- Workflow step timing (workers/generate-workflow.ts uses these) ------
+
+/** Retries after the first attempt. */
+export const STEP_RETRY_LIMIT = 2;
+/** First retry delay; exponential backoff doubles it each time (10 s, 20 s). */
+export const STEP_RETRY_DELAY_SECONDS = 10;
+/**
+ * Per attempt. One streamed call with high effort and max_tokens 64000 (thinking included) can
+ * run well past 10 minutes on a long blog draft.
+ */
+export const STEP_TIMEOUT_MINUTES = 15;
+
+/** Worst case for one run: every attempt times out, plus every retry delay. */
+const RUN_MAX_MS =
+  (STEP_RETRY_LIMIT + 1) * STEP_TIMEOUT_MINUTES * 60_000 +
+  Array.from({ length: STEP_RETRY_LIMIT }, (_, i) => STEP_RETRY_DELAY_SECONDS * 2 ** i * 1000).reduce((a, b) => a + b, 0);
+
+/**
+ * A "generating" claim older than this belongs to a dead run and may be taken over. Longer than
+ * RUN_MAX_MS (45 min 30 s) plus a margin for Workflow scheduling: 50 min 30 s.
+ */
+export const STALE_CLAIM_MS = RUN_MAX_MS + 5 * 60_000;
 
 // ---- Runners (called inside the Workflow step) ----------------------------
 
@@ -115,10 +136,11 @@ export async function runRewrite(
     await db.batch([
       insertDraftIfOwned(db, run, {
         channel,
-        // Keep only the parts this channel has.
+        // Keep only the parts this channel has. A missing title or missing tags keep the current
+        // ones: "더 짧게" should not wipe her hashtags.
         title: channel === "blog" || channel === "daangn" ? (output.title ?? current?.title ?? null) : null,
         body: output.body,
-        hashtags: channel === "instagram" ? hashtagsJson(output.hashtags ?? []) : null,
+        hashtags: channel === "instagram" ? rewrittenHashtags(output.hashtags, current?.hashtags ?? null) : null,
         createdAt: deps.now().toISOString(),
       }),
       db
@@ -249,12 +271,19 @@ function hashtagsJson(tags: string[]): string {
   return JSON.stringify(normalizeHashtags(tags));
 }
 
+/** New tags replace the current ones; null, [] or only blank tags keep them (stored JSON as is). */
+function rewrittenHashtags(tags: string[] | null, currentJson: string | null): string {
+  const clean = normalizeHashtags(tags ?? []);
+  if (clean.length > 0) return JSON.stringify(clean);
+  return currentJson ?? hashtagsJson([]);
+}
+
 // ---- Start (called from route actions) ------------------------------------
 
 /**
  * Marks the post "generating" under a new Workflow instance id and starts that instance. One SQL
- * statement claims the post, so a double tap cannot start two runs; a claim older than 40 min
- * is treated as dead and can be taken over. If the Workflow cannot be created, the post is put
+ * statement claims the post, so a double tap cannot start two runs; a claim older than
+ * STALE_CLAIM_MS is treated as dead and can be taken over. If the Workflow cannot be created, the post is put
  * back (failed, or ready for a rewrite) with a Korean reason instead of throwing, so the caller
  * can just go on to the post page.
  */
@@ -307,6 +336,9 @@ export async function startGeneration(
 /**
  * Production (https origin): short-lived signed URLs, so Claude fetches the photos itself.
  * Local dev: Claude cannot reach localhost, so read the photo from R2 and send base64.
+ * An https origin that is still the wrangler.jsonc placeholder (an `example` host) or is not a
+ * valid URL would send Claude dead links, and the API's 400 would tell the owner to change her
+ * photos; fail the run at once with an admin message instead (GenerationError: not retried).
  */
 export function makePhotoSource(
   env: { PUBLIC_ORIGIN: string; IMAGE_URL_SECRET: string; PHOTOS: R2Bucket },
@@ -314,6 +346,7 @@ export function makePhotoSource(
 ): (key: string) => Promise<ImageSource> {
   return async (key) => {
     if (env.PUBLIC_ORIGIN.startsWith("https://")) {
+      if (!isUsableOrigin(env.PUBLIC_ORIGIN)) throw new GenerationError("public_origin");
       return { type: "url", url: await signImageUrl(env.PUBLIC_ORIGIN, key, env.IMAGE_URL_SECRET, now()) };
     }
     const object = await env.PHOTOS.get(key);
@@ -321,6 +354,16 @@ export function makePhotoSource(
     // Uploads are always re-encoded to JPEG by the browser (posts.server.ts).
     return { type: "base64", media_type: "image/jpeg", data: toBase64(new Uint8Array(await object.arrayBuffer())) };
   };
+}
+
+function isUsableOrigin(origin: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  return url.protocol === "https:" && url.hostname !== "" && !url.hostname.split(".").includes("example");
 }
 
 function toBase64(bytes: Uint8Array): string {
