@@ -1,6 +1,8 @@
 import { env } from "cloudflare:workers";
 import { createRequestHandler } from "react-router";
-import { withD1Session } from "../app/server/db";
+import { runScheduled } from "../app/kakao/alerts.server";
+import { kakaoConfig } from "../app/kakao/link.server";
+import { getDb, withD1Session } from "../app/server/db";
 
 const requestHandler = createRequestHandler(
   () => import("virtual:react-router/server-build"),
@@ -31,6 +33,18 @@ export default {
       `${BOOKMARK_COOKIE}=${encodeURIComponent(latest)}; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Lax`,
     );
     return out;
+  },
+
+  // Kakao alerts; crons in wrangler.jsonc `triggers` (CRONS in app/kakao/alerts.server.ts).
+  async scheduled(controller) {
+    const now = new Date(controller.scheduledTime);
+    const outcome = await runScheduled(controller.cron, now, {
+      db: getDb(env.DB),
+      cfg: kakaoConfig(env),
+      origin: env.PUBLIC_ORIGIN,
+      fetch: (url, init) => fetch(url, init),
+    });
+    console.log(`kakao alert ${controller.cron}: ${outcome}`);
   },
 } satisfies ExportedHandler<Env>;
 
