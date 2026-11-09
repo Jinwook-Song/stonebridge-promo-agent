@@ -126,6 +126,11 @@ describe("alertMessage: draft_ready", () => {
     const emoji = alertMessage("draft_ready", ORIGIN, { postId: 1, memo: "🍪".repeat(31) });
     expect(emoji.text).toBe("홍보글 초안이 준비됐어요\n" + "🍪".repeat(30) + "…");
   });
+
+  it("flattens a multi-line memo to one line so the preview stays a single line", () => {
+    const msg = alertMessage("draft_ready", ORIGIN, { postId: 1, memo: "  크리스마스 마카롱\n\n 단체 주문\t안내 " });
+    expect(msg.text).toBe("홍보글 초안이 준비됐어요\n크리스마스 마카롱 단체 주문 안내");
+  });
 });
 
 describe("runScheduled: 발주 알림", () => {

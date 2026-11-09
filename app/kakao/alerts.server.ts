@@ -96,9 +96,11 @@ export function alertMessage(kind: AlertKind | "test" | "draft_ready", origin: s
   const base = origin.replace(/\/+$/, "");
   switch (kind) {
     case "draft_ready": {
+      // One line: a memo's line breaks would push the button text down in the chat bubble.
+      const memo = info!.memo.replace(/\s+/g, " ").trim();
       // Code points, not UTF-16 units, so an emoji is never cut in half.
-      const chars = [...info!.memo];
-      const preview = chars.length > MEMO_PREVIEW_CHARS ? `${chars.slice(0, MEMO_PREVIEW_CHARS).join("")}…` : info!.memo;
+      const chars = [...memo];
+      const preview = chars.length > MEMO_PREVIEW_CHARS ? `${chars.slice(0, MEMO_PREVIEW_CHARS).join("")}…` : memo;
       return { text: `홍보글 초안이 준비됐어요\n${preview}`, url: `${base}/posts/${info!.postId}`, buttonTitle: "초안 보기" };
     }
     case "order":
