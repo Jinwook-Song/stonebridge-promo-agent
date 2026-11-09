@@ -66,3 +66,15 @@
   - 가격 항목은 모두 `needs_confirm = 1`이다. 사장님이 앱의 가격표에서 저장하면 확인된 것으로 바뀐다.
   - 소개 문구는 분석 문서에 일부만 있어서 사장님 확인이 필요하다. 발신 정보(`quote_sender`)는 넣지 않는다 (기본값 스톤테이블, 사업자 등록 후 설정에서 입력).
 - [ ] **실제 확인**: `npx wrangler tail`을 켜 두고, 가짜 문의로 견적을 만든다 → 수정 요청으로 v2 → 엑셀 받기(200, `filename*`) → 테스트 견적 지우기. 2026-11-09 실측: v1 약 16초(입력 5,973 / 출력 748 토큰), v2 약 17초(캐시 읽기 5,195 토큰), 두 번 합쳐 약 $0.07.
+
+## 경쟁 업체 감시 (2026-11-09 배포)
+
+순서: 원격 마이그레이션 → 비공개 감시 목록 시드 → npm run deploy
+
+- [ ] **마이그레이션 `0005_competitor_event_notes.sql`** (`competitor_events.notes` 칸 추가). 추가만 하는 마이그레이션. 배포 전에 먼저 `npx wrangler d1 migrations apply promo-agent --remote`.
+- [ ] **새 Workflow 바인딩**: `WATCH` (`watch`, `WatchWorkflow`). 크론 `0 18 * * *` (UTC, 한국 시간 새벽 3시)이 매일 감시를 시작한다. 배포 결과의 Bindings와 schedule 목록에서 확인한다.
+- [ ] **비공개 시드** (`private/seed-watch-2026-11-09.sql`, git에 올리지 않는다): `npx wrangler d1 execute promo-agent --remote --file private/seed-watch-2026-11-09.sql`
+  - 다시 실행해도 안전하다. 같은 주소가 이미 있으면 넣지 않는다.
+  - 경쟁 업체 이름과 주소는 이 파일과 DB에만 있다. 저장소에는 올리지 않는다.
+- [ ] **실제 확인**: 로그인 후 `/competitors`에서 "지금 한 번 돌리기" → `npx wrangler tail`로 `watch source N: ok, ... calls, ... added` 로그와 `claude usage`를 본다. 한 번 돌릴 때 Claude 호출은 최대 30번(`WATCH_RUN_BUDGET`), 글 하나당 1번이다. 수동 실행은 같은 한국 시간 1시간 안에서 한 번만 시작된다.
+- [ ] 다음 날 새벽 3시 크론이 돈 뒤 `SELECT name, last_status, last_error, last_run_at FROM watch_sources`로 출처마다 `last_run_at`이 갱신됐는지 본다.
