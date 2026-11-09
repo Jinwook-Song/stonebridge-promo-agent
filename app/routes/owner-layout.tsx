@@ -41,7 +41,8 @@ export default function OwnerLayout() {
   const navigation = useNavigation();
   const pendingPathname = navigation.state === "loading" ? navigation.location.pathname : null;
   const lit = litTab(LINKS, pathname, pendingPathname);
-  // Another page is on its way: the old one fades a little, only if the wait is noticeable.
+  // Another page is on its way: the old one fades a little, only if the wait is noticeable. The
+  // transition lives under data-leaving only, so the new page shows at full strength at once.
   const leaving = pendingPathname !== null && pendingPathname !== pathname;
   return (
     <div className={cn("mx-auto flex min-h-screen w-full flex-col", wide ? "max-w-4xl" : "max-w-xl")}>
@@ -76,7 +77,7 @@ export default function OwnerLayout() {
       </header>
       <main
         data-leaving={leaving || undefined}
-        className="flex-1 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] transition-opacity data-[leaving]:opacity-50 data-[leaving]:delay-150"
+        className="flex-1 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] data-[leaving]:opacity-50 data-[leaving]:transition-opacity data-[leaving]:delay-150"
       >
         <Outlet />
       </main>
