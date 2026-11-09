@@ -8,6 +8,8 @@
     "app/quote/lines.ts",
     "app/quote/prompt.ts",
     "app/watch/types.ts",
+    "app/watch/extract.ts",
+    "app/watch/naver-blog.ts",
     "app/promo/claude.server.ts",
     "app/promo/default-rules.ts",
     "app/promo/photo-pick.server.ts",

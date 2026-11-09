@@ -45,10 +45,12 @@
 			"bucket_name": "promo-photos"
 		}
 	],
-	// Kakao alerts (UTC; KST = UTC+9). Keep in sync with CRONS in app/kakao/alerts.server.ts.
-	// 14:20 UTC = 23:20 KST 발주 알림; 01:00 UTC = 10:00 KST 홍보글 알림 (sends on her chosen day only).
+	// UTC; KST = UTC+9. Keep in sync with CRONS in app/kakao/alerts.server.ts (Kakao alerts) and
+	// WATCH_CRON in app/watch/run.server.ts.
+	// 14:20 UTC = 23:20 KST 발주 알림; 01:00 UTC = 10:00 KST 홍보글 알림 (sends on her chosen day only);
+	// 18:00 UTC = 03:00 KST 경쟁 업체 감시 (starts the `watch` Workflow).
 	"triggers": {
-		"crons": ["20 14 * * *", "0 1 * * *"]
+		"crons": ["20 14 * * *", "0 1 * * *", "0 18 * * *"]
 	},
 	"workflows": [
 		{
@@ -60,6 +62,11 @@
 			"name": "quote-generate",
 			"binding": "QUOTE_GENERATE",
 			"class_name": "QuoteGenerateWorkflow"
+		},
+		{
+			"name": "watch",
+			"binding": "WATCH",
+			"class_name": "WatchWorkflow"
 		}
 	]
 }

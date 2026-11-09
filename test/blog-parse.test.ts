@@ -27,6 +27,7 @@ describe("parseRss", () => {
     expect(parseRss(RSS_FIXTURE)[0]).toEqual({
       title: "[OO초등학교] 샌드위치 30인분 단체주문",
       url: "https://blog.naver.com/demo/123",
+      key: "123",
       logNo: "123",
       pubDate: "Sun, 01 Nov 2026 10:00:00 +0900",
     });

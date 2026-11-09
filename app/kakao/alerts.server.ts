@@ -6,8 +6,9 @@ import { describeKakaoError, getLink, keepAlive, sendToMe } from "./link.server"
 import type { AlertKind } from "./types";
 
 /**
- * Cron expressions (UTC) in wrangler.jsonc `triggers.crons`; keep the two in sync.
- * KST is UTC+9 all year (no DST).
+ * Kakao alert cron expressions (UTC) in wrangler.jsonc `triggers.crons`; keep the two in sync.
+ * The other cron there, 03:00 KST, is the competitor watch (WATCH_CRON in app/watch/run.server.ts),
+ * routed before runScheduled in workers/app.ts. KST is UTC+9 all year (no DST).
  */
 export const CRONS = {
   /** 23:20 KST — she orders cafe supplies on Coupang after closing. */

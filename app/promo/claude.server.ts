@@ -3,6 +3,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import type { z } from "zod";
 import { ImportOutput, QuoteOutput } from "../quote/prompt";
+import { EventExtract, PriceExtract } from "../watch/extract";
 import { PhotoPickOutput } from "./photo-pick.server";
 import { ChannelRewrite, DraftOutput } from "./prompt";
 
@@ -68,12 +69,16 @@ export type RewriteCall = (req: ModelRequest) => Promise<ModelResult<ChannelRewr
 export type PickCall = (req: ModelRequest) => Promise<ModelResult<PhotoPickOutput>>;
 export type QuoteCall = (req: ModelRequest) => Promise<ModelResult<QuoteOutput>>;
 export type ImportCall = (req: ModelRequest) => Promise<ModelResult<ImportOutput>>;
+export type WatchEventCall = (req: ModelRequest) => Promise<ModelResult<EventExtract>>;
+export type WatchPricesCall = (req: ModelRequest) => Promise<ModelResult<PriceExtract>>;
 export type ClaudeCalls = {
   drafts: DraftCall;
   rewrite: RewriteCall;
   pick: PickCall;
   quote: QuoteCall;
   importQuote: ImportCall;
+  watchEvent: WatchEventCall;
+  watchPrices: WatchPricesCall;
 };
 
 type Effort = "low" | "medium" | "high";
@@ -84,6 +89,12 @@ type Effort = "low" | "medium" | "high";
  * SDK defaults (they run in a Workflow step that has its own retry policy).
  */
 const PICK_REQUEST_OPTIONS = { maxRetries: 0, timeout: 40_000 } as const;
+
+/**
+ * Competitor watch: up to 10 calls run one after another inside a 5-minute Workflow step, so one
+ * slow call must not use the whole step. A short extraction at low effort.
+ */
+const WATCH_REQUEST_OPTIONS = { maxRetries: 1, timeout: 60_000 } as const;
 
 /**
  * Real calls. API errors (network, 429, 5xx, ...) are left to propagate as the SDK's typed
@@ -141,6 +152,9 @@ export function makeClaudeCalls(apiKey: string): ClaudeCalls {
     quote: (req) => call(QuoteOutput, req, "medium"),
     // Copying a finished quote needs no judgement.
     importQuote: (req) => call(ImportOutput, req, "low"),
+    // Copying facts out of one page; nothing to judge.
+    watchEvent: (req) => call(EventExtract, req, "low", WATCH_REQUEST_OPTIONS),
+    watchPrices: (req) => call(PriceExtract, req, "low", WATCH_REQUEST_OPTIONS),
   };
 }
 
@@ -275,6 +289,34 @@ export function makeFakeClaudeCalls(): ClaudeCalls {
           },
           lines: [{ label: "테스트 항목", content: "(가져온 견적)", qty: 10, unitPrice: 10000, svc: false, menu: "", note: "" }],
         },
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    },
+    // Every post reads as a small event, so the watch tab has rows to show locally.
+    watchEvent: async () => {
+      await wait();
+      return {
+        output: {
+          isEvent: true,
+          date: "",
+          client: "테스트 고객",
+          venue: "",
+          eventType: "테스트 행사",
+          menu: ["테스트 메뉴"],
+          quantity: null,
+          headcount: 10,
+          price: null,
+          notes: "(테스트 추출)",
+        },
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    },
+    watchPrices: async () => {
+      await wait();
+      return {
+        output: { packages: [{ name: "테스트 패키지", perPerson: 10000, items: ["테스트 메뉴"], minimum: null, fees: [] }] },
         inputTokens: 0,
         outputTokens: 0,
       };

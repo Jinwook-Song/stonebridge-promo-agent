@@ -292,7 +292,7 @@ export const competitorPrices = sqliteTable(
     /** JSON array of strings. */
     itemsJson: text("items_json"),
     minimum: integer("minimum"),
-    /** JSON array of { label, amount } extra fees. */
+    /** JSON array of strings: extra fees as written on the page ("배송비 별도"). */
     feesJson: text("fees_json"),
     seenAt: text("seen_at").notNull(),
   },
