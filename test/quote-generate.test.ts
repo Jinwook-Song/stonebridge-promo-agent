@@ -533,6 +533,20 @@ describe("imported quotes", () => {
   });
 });
 
+describe("imported quote limits", () => {
+  it("clamps a file's numbers so the version stays readable", async () => {
+    const { quoteId } = await createQuote(db, { text: "큰 견적", source: "imported" }, T0);
+    const huge: ImportOutput = {
+      event: IMPORTED.event,
+      lines: Array.from({ length: 250 }, () => ({ label: "도시락", content: "", qty: 1e9, unitPrice: 2e8, svc: false, menu: "", note: "" })),
+    };
+    await startAndRun(quoteId, 1, deps({ importQuote: async () => ({ output: huge, inputTokens: 1, outputTokens: 1 }) }));
+    const lines = (await getQuote(db, quoteId)).version.lines;
+    expect(lines).toHaveLength(200);
+    expect(lines![0]).toMatchObject({ qty: 100_000, unitPrice: null });
+  });
+});
+
 describe("startQuoteGeneration", () => {
   it("refuses a second start while the first claim is fresh", async () => {
     const { quoteId } = await createQuote(db, { text: "다과 견적", source: "app" }, T0);

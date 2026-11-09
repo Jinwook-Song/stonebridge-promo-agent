@@ -44,9 +44,10 @@ export async function loader({ params }: Route.LoaderArgs) {
     vatIncluded: quote.vatIncluded,
     intro,
     fixedLines,
-    createdAt: quote.createdAt,
+    // A revision is dated the day it was made, not the day of the first inquiry.
+    createdAt: version.createdAt,
   });
-  const name = xlsxFileName(version.event.customerName, quote.createdAt, version.version);
+  const name = xlsxFileName(version.event.customerName, version.createdAt, version.version);
   return new Response(bytes, {
     headers: {
       "Content-Type": XLSX_TYPE,

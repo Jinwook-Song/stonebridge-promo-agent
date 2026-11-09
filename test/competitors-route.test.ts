@@ -264,6 +264,19 @@ describe("sources tab actions", () => {
       expect(create).toHaveBeenCalledTimes(1);
     });
 
+    it("says this hour's manual run already finished instead of 'running'", async () => {
+      const now = new Date();
+      const hour = String(new Date(now.getTime() + 9 * 3600_000).getUTCHours()).padStart(2, "0");
+      for (const status of ["complete", "errored", "terminated"]) {
+        const { create } = fakeWatch({ [`watch-manual-${kstDate(now)}-${hour}`]: status });
+        expect(await post({ intent: "runNow" })).toMatchObject({
+          ok: true,
+          message: "이번 시간에 이미 돌렸어요. 다음 정시 뒤에 다시 눌러 주세요.",
+        });
+        expect(create).not.toHaveBeenCalled();
+      }
+    });
+
     it("says so when the Workflow could not start", async () => {
       (env as { WATCH: unknown }).WATCH = {
         create: vi.fn(async () => {

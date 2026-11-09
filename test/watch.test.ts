@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { env, type WorkflowStep } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -423,6 +424,26 @@ describe("runWatchSource (rss)", () => {
 
     expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 2, added: 0, status: "ok" });
     expect((await source(id)).lastSeenKey).toBe("103");
+  });
+
+  it("stores a Korean message, not the SDK's English, when the AI API fails", async () => {
+    const cases: [number, string][] = [
+      [401, "AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요."],
+      [529, "AI가 잠시 응답하지 않았어요. 다음 실행 때 다시 읽어요."],
+    ];
+    for (const [status, message] of cases) {
+      await db.delete(watchSources);
+      const id = await addSource("rss", { lastSeenKey: "101" });
+      const { deps } = fakeDeps(feedRoutes());
+      const failing: WatchDeps = {
+        ...deps,
+        watchEvent: async () => {
+          throw Anthropic.APIError.generate(status, { type: "error", error: { type: "x", message: "invalid x-api-key" } }, "invalid x-api-key", new Headers());
+        },
+      };
+      expect(await runWatchSource(failing, id, WATCH_RUN_BUDGET, NOW)).toMatchObject({ status: "error" });
+      expect(await source(id)).toMatchObject({ lastStatus: "error", lastError: message, lastSeenKey: "101" });
+    }
   });
 
   it("does nothing with no budget left, but notes the skip on the watch list", async () => {

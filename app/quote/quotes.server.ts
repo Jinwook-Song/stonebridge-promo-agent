@@ -5,7 +5,7 @@ import { STALE_CLAIM_MS } from "../promo/generate.server";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
 import { getQuoteSettings } from "./quote-settings.server";
-import { computeTotals } from "./lines";
+import { computeTotals, MAX_LINES } from "./lines";
 import {
   ComparisonSchema,
   QUOTE_STATUSES,
@@ -22,7 +22,6 @@ import {
 } from "./types";
 
 const MAX_TEXT = 20_000;
-const MAX_LINES = 200;
 
 export type QuoteHeader = {
   id: number;

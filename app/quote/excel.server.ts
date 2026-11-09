@@ -22,6 +22,7 @@ export type QuoteXlsxInput = {
   vatIncluded: boolean;
   intro: string;
   fixedLines: string;
+  /** The version's creation time: 견적일. */
   createdAt: string;
 };
 
@@ -173,10 +174,6 @@ export async function buildQuoteXlsx(input: QuoteXlsxInput): Promise<Uint8Array<
     ws.mergeCells(row.number, 2, row.number, LAST_COL);
     row.getCell(1).font = { bold: true };
     row.getCell(2).alignment = { horizontal: "left" };
-  }
-  if (totals.missingPrices > 0) {
-    const row = textRow(`단가 없는 줄 ${totals.missingPrices}개는 합계에 들어가지 않았어요. 단가를 넣어 주세요.`);
-    row.getCell(1).font = { color: RED };
   }
 
   const fixed = fixedLines.replace(/\r\n?/g, "\n").split("\n").map((l) => l.trim()).filter(Boolean);

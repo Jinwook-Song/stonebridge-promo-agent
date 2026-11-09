@@ -4,6 +4,20 @@ import { useFetcher } from "react-router";
 /** What the quote-detail action returns. */
 export type QuoteActionResult = { ok?: true; error?: string; intent?: string };
 
+/** Whether the server holds what the screen shows: a download now would carry older values otherwise. */
+export type SyncState = "saved" | "saving" | "failed";
+
+/** Tells `report` (e.g. the Excel button's guard) whenever a saver's SyncState changes; "saved" on unmount. */
+export function useReportSync(saver: { pending: boolean; error: string | null }, report?: (state: SyncState) => void) {
+  const state: SyncState = saver.pending ? "saving" : saver.error !== null ? "failed" : "saved";
+  const reportRef = useRef(report);
+  reportRef.current = report;
+  useEffect(() => {
+    reportRef.current?.(state);
+  }, [state]);
+  useEffect(() => () => reportRef.current?.("saved"), []);
+}
+
 /**
  * Saves one JSON value of the quote screen through its own fetcher, one request at a time: a
  * change made while a save is in flight waits for it and then sends the latest value, so the

@@ -17,7 +17,7 @@ import {
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
 import { selectCandidates } from "./comparison.server";
-import { buildLines, computeTotals, diffLines } from "./lines";
+import { buildLines, cleanQty, computeTotals, diffLines, MAX_LINES, storablePrice } from "./lines";
 import { listPriceItems } from "./price-sheet.server";
 import { buildImportSystem, buildImportUser, buildQuoteSystem, buildQuoteUser, type ImportOutput } from "./prompt";
 import { getQuote } from "./quotes.server";
@@ -78,10 +78,6 @@ type Generated = {
   outputTokens: number;
 };
 
-/** Whole won, or null: a file value the model could not read as a price stays empty. */
-function wholeWon(n: number | null): number | null {
-  return n !== null && Number.isInteger(n) && n >= 0 ? n : null;
-}
 
 function cleanEvent(event: QuoteEvent): QuoteEvent {
   const headcount = event.headcount !== null && Number.isInteger(event.headcount) && event.headcount > 0 ? event.headcount : null;
@@ -114,13 +110,17 @@ function revisedEvent(model: QuoteEvent, prev: QuoteEvent): QuoteEvent {
   return event;
 }
 
+/**
+ * The file's lines as stored lines. A value the model could not read as a price (or one too large
+ * to store) stays empty; at most MAX_LINES lines, qty within the line schema.
+ */
 function importedLines(lines: ImportOutput["lines"]): QuoteLine[] {
-  return lines.map((l) => ({
+  return lines.slice(0, MAX_LINES).map((l) => ({
     itemId: null,
     label: l.label,
     content: l.content,
-    qty: Math.max(0, Math.round(l.qty)),
-    unitPrice: wholeWon(l.unitPrice),
+    qty: cleanQty(l.qty),
+    unitPrice: storablePrice(l.unitPrice),
     priceSource: "imported",
     svc: l.svc,
     menu: l.menu,

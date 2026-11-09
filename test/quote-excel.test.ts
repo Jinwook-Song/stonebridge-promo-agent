@@ -119,7 +119,8 @@ describe("buildQuoteXlsx", () => {
     expect(supply.formula).toBe(`SUM(E${first}:E${last})`);
     expect(supply.result).toBe(totals.supply);
     expect(totals.supply).toBe(500000);
-    expect(allText(ws)).toContain("단가 없는 줄 1개");
+    // The unpriced line shows "단가 없음" in its own row (see the owner's-to-do test below).
+    expect(allText(ws)).toContain("단가 없음");
   });
 
   it("VAT on: rounds supply * 1.1 and labels the total", async () => {
@@ -154,6 +155,13 @@ describe("buildQuoteXlsx", () => {
     expect(introRow).toBeLessThan(header);
     expect(find(ws, "일회용품 제공").row).toBeGreaterThan(find(ws, "공급금액").row);
     expect(find(ws, "세팅 및 철거").row).toBe(find(ws, "일회용품 제공").row + 1);
+  });
+
+  it("leaves the owner's to-do about missing prices out of the customer's file", async () => {
+    const text = allText(await read(await buildQuoteXlsx(base)));
+    expect(text).toContain("단가 없음");
+    expect(text).not.toContain("단가를 넣어 주세요");
+    expect(text).not.toContain("합계에 들어가지 않았어요");
   });
 
   it("handles a quote with no lines", async () => {
@@ -232,6 +240,23 @@ describe("quote-xlsx route", () => {
   async function get(id: string, version: string) {
     return xlsxLoader({ request: new Request(`http://localhost/quotes/${id}/v/${version}/xlsx`), params: { id, version }, context: {} } as never);
   }
+
+  it("dates the file and its 견적일 by the version, not the quote", async () => {
+    const id = await readyQuote();
+    await db.insert(quoteVersions).values({
+      quoteId: id,
+      version: 2,
+      status: "ready",
+      inputText: "문의",
+      changeRequest: "인원 변경",
+      eventJson: JSON.stringify(event),
+      linesJson: JSON.stringify(lines),
+      createdAt: "2026-11-12T03:00:00.000Z",
+    });
+    const res = (await get(String(id), "2")) as Response;
+    expect(res.headers.get("Content-Disposition")).toContain(encodeURIComponent("스톤테이블_견적서_가나다_학원_261112_v2.xlsx"));
+    expect(allText(await read(new Uint8Array(await res.arrayBuffer())))).toContain("견적일 2026-11-12");
+  });
 
   it("serves the file with a safe Content-Disposition", async () => {
     const id = await readyQuote();

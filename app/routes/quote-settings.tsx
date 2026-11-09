@@ -39,7 +39,7 @@ export async function loader({}: Route.LoaderArgs) {
 
 function oneOf<T extends string>(values: readonly T[], raw: string): T {
   if ((values as readonly string[]).includes(raw)) return raw as T;
-  throw new DomainError("INVALID_INPUT", "잘못된 요청입니다.");
+  throw new DomainError("INVALID_INPUT", "잘못된 요청이에요.");
 }
 
 function wholeNumber(raw: string, message: string): number {
@@ -56,7 +56,7 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
     switch (str("intent")) {
       case "savePriceItem": {
         const idText = str("id").trim();
-        const id = idText === "" ? undefined : wholeNumber(idText, "잘못된 요청입니다.");
+        const id = idText === "" ? undefined : wholeNumber(idText, "잘못된 요청이에요.");
         const minimumText = str("minimumQty").replace(/[,\s]/g, "");
         const sortText = str("sort").trim();
         await savePriceItem(
@@ -82,7 +82,7 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
         return { ok: true };
       }
       case "deletePriceItem":
-        await deletePriceItem(db, wholeNumber(str("id"), "잘못된 요청입니다."));
+        await deletePriceItem(db, wholeNumber(str("id"), "잘못된 요청이에요."));
         return { ok: true };
       case "saveQuoteSettings":
         await saveQuoteSettings(db, {
@@ -100,7 +100,7 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
         });
         return { ok: true, savedAt: Date.now() };
       default:
-        return { error: "잘못된 요청입니다." };
+        return { error: "잘못된 요청이에요." };
     }
   } catch (e) {
     if (e instanceof DomainError) return { error: e.message };
@@ -184,7 +184,7 @@ export default function QuoteSettings({ loaderData, actionData }: Route.Componen
         <Field label="입금 계좌" htmlFor="payment">
           <Textarea id="payment" name="payment" defaultValue={sender.payment} rows={2} />
         </Field>
-        <Field label="현장 안내" htmlFor="onsite" hint="견적서 아래쪽에 들어가요.">
+        <Field label="현장 안내" htmlFor="onsite" hint="견적서 위쪽 발신 정보 칸에 들어가요.">
           <Textarea id="onsite" name="onsite" defaultValue={sender.onsite} rows={3} />
         </Field>
         <Field label="소개 문구" htmlFor="intro" hint="견적서 맨 앞에 들어가는 인사말이에요.">

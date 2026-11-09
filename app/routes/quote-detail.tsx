@@ -15,7 +15,7 @@ import { formatDay } from "../promo/format-date";
 import { ComparisonPanel } from "../quote/components/ComparisonPanel";
 import { EventForm } from "../quote/components/EventForm";
 import { LinesTable } from "../quote/components/LinesTable";
-import { useJsonSaver, type QuoteActionResult } from "../quote/components/use-saver";
+import { useJsonSaver, useReportSync, type QuoteActionResult, type SyncState } from "../quote/components/use-saver";
 import { startQuoteGeneration } from "../quote/generate.server";
 import { listPriceItems } from "../quote/price-sheet.server";
 import {
@@ -107,7 +107,7 @@ export async function action({ request, params }: Route.ActionArgs) {
   const now = new Date();
   const versionOf = () => {
     const version = Number(str("version"));
-    if (!Number.isSafeInteger(version) || version <= 0) throw new DomainError("INVALID_INPUT", "잘못된 요청입니다.");
+    if (!Number.isSafeInteger(version) || version <= 0) throw new DomainError("INVALID_INPUT", "잘못된 요청이에요.");
     return version;
   };
 
@@ -150,7 +150,7 @@ export async function action({ request, params }: Route.ActionArgs) {
         await deleteQuote(db, id);
         return redirect("/quotes");
       default:
-        return data<QuoteActionResult>({ error: "잘못된 요청입니다.", intent }, { status: 400 });
+        return data<QuoteActionResult>({ error: "잘못된 요청이에요.", intent }, { status: 400 });
     }
   } catch (e) {
     if (e instanceof DomainError) {
@@ -196,7 +196,7 @@ export default function QuoteDetail({ loaderData }: Route.ComponentProps) {
 
       {!isLatest && (
         <p className="flex flex-wrap items-center gap-x-3 rounded-lg border bg-muted/60 px-3 py-2.5 text-sm">
-          <span>지난 버전이라 고칠 수 없어요.</span>
+          <span>지난 버전이라 행사 정보와 견적 표는 고칠 수 없어요. 상태, 발신 정보, VAT는 견적 전체에 적용돼서 여기서 바꿔도 모든 버전에 반영돼요.</span>
           <Link to={`/quotes/${quote.id}`} className="flex min-h-11 items-center font-medium text-primary underline underline-offset-2">
             최신 버전 보기 (v{latestVersion})
           </Link>
@@ -386,9 +386,14 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
   const vatForm = vatFetcher.formData?.get("vat");
   const vatIncluded = vatForm == null ? quote.vatIncluded : vatForm === "1";
   const scope = `${quote.id}-${version.version}`;
-  // Lines on screen the server does not hold yet: the download would still have the old prices.
-  const [linesSync, setLinesSync] = useState<"saved" | "saving" | "failed">("saved");
-  const linesUnsaved = linesSync !== "saved";
+  // Lines, event or sender on screen the server does not hold yet: the download would still have
+  // the old values.
+  const [linesSync, setLinesSync] = useState<SyncState>("saved");
+  const [eventSync, setEventSync] = useState<SyncState>("saved");
+  const [senderSync, setSenderSync] = useState<SyncState>("saved");
+  const syncs = [linesSync, eventSync, senderSync];
+  const fileSync: SyncState = syncs.includes("saving") ? "saving" : syncs.includes("failed") ? "failed" : "saved";
+  const unsaved = fileSync !== "saved";
 
   return (
     <>
@@ -405,7 +410,14 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
       )}
 
       <Section title="행사 정보">
-        <EventForm key={scope} quoteId={quote.id} version={version.version} initialEvent={event} readOnly={readOnly} />
+        <EventForm
+          key={scope}
+          quoteId={quote.id}
+          version={version.version}
+          initialEvent={event}
+          readOnly={readOnly}
+          onUnsavedChange={setEventSync}
+        />
       </Section>
 
       <Section title="견적 표">
@@ -435,6 +447,7 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
           quoteId={quote.id}
           initialSender={quote.sender}
           vatIncluded={vatIncluded}
+          onUnsavedChange={setSenderSync}
           onVat={(on) =>
             void vatFetcher.submit({ intent: "setVat", vat: on ? "1" : "0" }, { method: "post", action: `/quotes/${quote.id}` })
           }
@@ -445,14 +458,14 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
         <Button asChild variant="outline" size="lg" className="h-12">
           <a
             href={`/quotes/${quote.id}/v/${version.version}/xlsx`}
-            aria-disabled={linesUnsaved || undefined}
+            aria-disabled={unsaved || undefined}
             onClick={(e) => {
-              if (linesUnsaved) e.preventDefault();
+              if (unsaved) e.preventDefault();
             }}
-            className={cn(linesUnsaved && "pointer-events-none opacity-60")}
+            className={cn(unsaved && "pointer-events-none opacity-60")}
           >
-            {linesSync === "saving" ? <LoaderCircleIcon className="animate-spin" aria-hidden="true" /> : <DownloadIcon aria-hidden="true" />}
-            {linesSync === "saving" ? "저장 중…" : linesSync === "failed" ? "저장 못 한 내용이 있어요" : "엑셀 받기"}
+            {fileSync === "saving" ? <LoaderCircleIcon className="animate-spin" aria-hidden="true" /> : <DownloadIcon aria-hidden="true" />}
+            {fileSync === "saving" ? "저장 중…" : fileSync === "failed" ? "저장 못 한 내용이 있어요" : "엑셀 받기"}
           </a>
         </Button>
       </div>
@@ -526,14 +539,17 @@ function SenderPanel({
   initialSender,
   vatIncluded,
   onVat,
+  onUnsavedChange,
 }: {
   quoteId: number;
   initialSender: Sender;
   vatIncluded: boolean;
   onVat: (on: boolean) => void;
+  onUnsavedChange: (state: SyncState) => void;
 }) {
   const [sender, setSender] = useState(initialSender);
   const saver = useJsonSaver({ quoteId, intent: "saveSender", field: "sender", initial: initialSender });
+  useReportSync(saver, onUnsavedChange);
   return (
     <div className="flex flex-col gap-4">
       <label className="flex min-h-11 items-center justify-between gap-3">

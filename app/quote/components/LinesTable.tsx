@@ -1,5 +1,5 @@
 import { CircleAlertIcon, LightbulbIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import { Input, inputClass } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
@@ -7,7 +7,7 @@ import { Badge } from "../../components/ui/badge";
 import { cn } from "../../lib/utils";
 import { computeTotals, lineAmount } from "../lines";
 import type { QuoteLine } from "../types";
-import { useJsonSaver } from "./use-saver";
+import { useJsonSaver, useReportSync, type SyncState } from "./use-saver";
 
 /** The few price sheet columns the picker needs. */
 export type SheetChoice = {
@@ -73,19 +73,13 @@ export function LinesTable({
   sheet: SheetChoice[];
   readOnly: boolean;
   /** While the lines on screen are not what the server holds ("saving", or "failed" until retried) a download would be stale. */
-  onUnsavedChange?: (state: "saved" | "saving" | "failed") => void;
+  onUnsavedChange?: (state: SyncState) => void;
 }) {
   const nextKey = useRef(initialLines.length);
   const [rows, setRows] = useState<Row[]>(() => initialLines.map((line, key) => ({ key, line })));
   const [focusKey, setFocusKey] = useState<number | null>(null);
   const saver = useJsonSaver({ quoteId, version, intent: "saveLines", field: "lines", initial: initialLines });
-  const syncState = saver.pending ? "saving" : saver.error !== null ? "failed" : "saved";
-  const syncRef = useRef(onUnsavedChange);
-  syncRef.current = onUnsavedChange;
-  useEffect(() => {
-    syncRef.current?.(syncState);
-  }, [syncState]);
-  useEffect(() => () => syncRef.current?.("saved"), []);
+  useReportSync(saver, onUnsavedChange);
   const lines = rows.map((r) => r.line);
   const totals = computeTotals(lines, vatIncluded);
 
@@ -327,7 +321,7 @@ function LineRow({
           className={small}
         />
       </Cell>
-      <Cell label="비고" always className="md:col-span-3">
+      <Cell label="비고" hint="견적서에 나가요" always className="md:col-span-3">
         <Input
           value={line.note}
           readOnly={readOnly}
@@ -350,18 +344,24 @@ function LineRow({
 /** A labeled box. The label shows above the box on a phone; on wide screens the column header (or `always`) does. */
 function Cell({
   label,
+  hint,
   className,
   always,
   children,
 }: {
   label: string;
+  /** Short note after the label, e.g. that the field is printed for the customer. */
+  hint?: string;
   className?: string;
   always?: boolean;
   children: ReactNode;
 }) {
   return (
     <label className={cn("flex min-w-0 flex-col gap-1", className)}>
-      <span className={cn("text-xs text-muted-foreground", !always && "md:sr-only")}>{label}</span>
+      <span className={cn("text-xs text-muted-foreground", !always && "md:sr-only")}>
+        {label}
+        {hint && <span className="ml-1 text-sky-700">· {hint}</span>}
+      </span>
       {children}
     </label>
   );

@@ -5,7 +5,7 @@ import { Input } from "../../components/ui/input";
 import { Field } from "../../components/ui/label";
 import { Textarea } from "../../components/ui/textarea";
 import type { QuoteEvent } from "../types";
-import { useJsonSaver } from "./use-saver";
+import { useJsonSaver, useReportSync, type SyncState } from "./use-saver";
 
 type TextKey = Exclude<keyof QuoteEvent, "headcount" | "missing">;
 
@@ -29,15 +29,19 @@ export function EventForm({
   version,
   initialEvent,
   readOnly,
+  onUnsavedChange,
 }: {
   quoteId: number;
   version: number;
   initialEvent: QuoteEvent;
   readOnly: boolean;
+  /** Like LinesTable's: the Excel button waits while the event on screen is not saved. */
+  onUnsavedChange?: (state: SyncState) => void;
 }) {
   const [event, setEvent] = useState(initialEvent);
   const [headcountText, setHeadcountText] = useState(initialEvent.headcount === null ? "" : String(initialEvent.headcount));
   const saver = useJsonSaver({ quoteId, version, intent: "saveEvent", field: "event", initial: initialEvent });
+  useReportSync(saver, onUnsavedChange);
 
   const set = (patch: Partial<QuoteEvent>) => setEvent((prev) => ({ ...prev, ...patch }));
 
@@ -99,7 +103,7 @@ export function EventForm({
             className="h-11"
           />
         </Field>
-        <Field label="요청 사항" htmlFor="event-requests" className="sm:col-span-2">
+        <Field label="요청 사항" htmlFor="event-requests" className="sm:col-span-2" hint="견적서에 특이사항으로 나가요.">
           <Textarea
             id="event-requests"
             rows={3}

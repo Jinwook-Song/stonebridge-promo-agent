@@ -7,6 +7,7 @@ import {
   type ModelLine,
   type PriceItem,
 } from "../app/quote/lines";
+import { LinesSchema } from "../app/quote/quotes.server";
 import type { QuoteLine } from "../app/quote/types";
 
 function item(over: Partial<PriceItem> & { id: number; name: string }): PriceItem {
@@ -248,6 +249,19 @@ describe("buildLines qty", () => {
     );
     expect(out.map((l) => l.qty)).toEqual([0, 3, 0, 4]);
   });
+
+  it("keeps stored lines inside what the stored-lines schema reads back", () => {
+    const out = buildLines(
+      Array.from({ length: 250 }, () => model({ qty: 1e9 })),
+      [...sheet, item({ id: 9, name: "잘못 큰 단가", unitPrice: 2e8 })],
+      null,
+    );
+    expect(out).toHaveLength(200);
+    expect(out[0]!.qty).toBe(100_000);
+    const [big] = buildLines([model({ itemId: 9 })], [item({ id: 9, name: "잘못 큰 단가", unitPrice: 2e8 })], null);
+    expect(big).toMatchObject({ unitPrice: null, priceSource: "hand" });
+    expect(LinesSchema.safeParse(out).success).toBe(true);
+  });
 });
 
 describe("diffLines", () => {
@@ -264,7 +278,12 @@ describe("diffLines", () => {
   });
 
   it("reports a price change with thousands separators", () => {
-    expect(diffLines([line()], [line({ unitPrice: 9000 })])).toEqual(["단가 7,700→9,000원: 다과 4종"]);
+    expect(diffLines([line()], [line({ unitPrice: 9000 })])).toEqual(["단가 7,700원→9,000원: 다과 4종"]);
+  });
+
+  it("does not put 원 after 없음 when a price is gone or new", () => {
+    expect(diffLines([line()], [line({ unitPrice: null })])).toEqual(["단가 7,700원→없음: 다과 4종"]);
+    expect(diffLines([line({ unitPrice: null })], [line()])).toEqual(["단가 없음→7,700원: 다과 4종"]);
   });
 
   it("reports SVC on and off", () => {

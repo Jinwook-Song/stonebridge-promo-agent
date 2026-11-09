@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { and, desc, eq } from "drizzle-orm";
 import { competitorEvents, competitorPrices, watchSources } from "../../database/schema";
 import { kst } from "../kakao/alerts.server";
@@ -5,6 +6,7 @@ import {
   GenerationError,
   makeClaudeCalls,
   makeFakeClaudeCalls,
+  permanentApiFailure,
   type WatchEventCall,
   type WatchPricesCall,
 } from "../promo/claude.server";
@@ -114,8 +116,8 @@ export async function runWatchSource(
       .where(eq(watchSources.id, source.id));
     return { ...progress, status: "ok" };
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    console.warn("watch source failed", { sourceId, error: message });
+    const message = errorMessage(e);
+    console.warn("watch source failed", { sourceId, error: e instanceof Error ? e.message : String(e) });
     const done = e instanceof SourceError ? e.done : {};
     await deps.db
       .update(watchSources)
@@ -123,6 +125,15 @@ export async function runWatchSource(
       .where(eq(watchSources.id, source.id));
     return { ...progress, status: "error" };
   }
+}
+
+/** The watch list shows lastError to the owner: AI API failures in Korean, not the SDK's English. */
+function errorMessage(e: unknown): string {
+  const permanent = permanentApiFailure(e);
+  if (permanent?.kind === "setup") return permanent.message;
+  if (permanent) return "AI가 이 글을 처리하지 못했어요. 다음 실행 때 다시 읽어요.";
+  if (e instanceof Anthropic.APIError) return "AI가 잠시 응답하지 않았어요. 다음 실행 때 다시 읽어요.";
+  return e instanceof Error ? e.message : String(e);
 }
 
 class HttpError extends Error {
@@ -469,30 +480,32 @@ export async function startWatchRun(
 /** Instance states in which a run is still going (or about to). */
 const ACTIVE_STATES = new Set(["queued", "running", "waiting", "waitingForPause", "paused"]);
 
-async function isActive(workflow: Pick<Workflow, "get">, id: string): Promise<boolean> {
+/** "none" when there is no such instance (or it cannot be read). */
+async function instanceState(workflow: Pick<Workflow, "get">, id: string): Promise<"active" | "finished" | "none"> {
   try {
     const { status } = await (await workflow.get(id)).status();
-    return ACTIVE_STATES.has(status);
+    return ACTIVE_STATES.has(status) ? "active" : "finished";
   } catch {
-    // No such instance.
-    return false;
+    return "none";
   }
 }
 
 /**
  * The owner's "run it now". Does nothing (already_running) while today's cron run or this hour's
  * manual run is still going, so taps and the cron cannot pile up runs that each spend the Claude
- * budget. Its instance id is per KST hour, so a second tap in the same hour finds the first.
+ * budget. Its instance id is per KST hour, so a second tap in the same hour finds the first
+ * (already_finished once that run is over: the next one can start after the hour).
  */
 export async function startManualWatchRun(
   workflow: Pick<Workflow, "create" | "get">,
   now: Date,
-): Promise<"started" | "already_running"> {
+): Promise<"started" | "already_running" | "already_finished"> {
   const hour = String(new Date(now.getTime() + 9 * 3600_000).getUTCHours()).padStart(2, "0");
   const manualId = `watch-manual-${kst(now).date}-${hour}`;
-  for (const id of [`watch-${kst(now).date}`, manualId]) {
-    if (await isActive(workflow, id)) return "already_running";
-  }
+  if ((await instanceState(workflow, `watch-${kst(now).date}`)) === "active") return "already_running";
+  const manual = await instanceState(workflow, manualId);
+  if (manual === "active") return "already_running";
+  if (manual === "finished") return "already_finished";
   return (await startWatchRun(workflow, now, manualId)) === "started" ? "started" : "already_running";
 }
 

@@ -21,6 +21,16 @@ export type ModelLine = {
 
 export type Totals = { supply: number; vat: number; total: number; missingPrices: number };
 
+/** What a stored line may hold (QuoteLineSchema and LinesSchema read nothing beyond these). */
+export const MAX_QTY = 100_000;
+export const MAX_UNIT_PRICE = 100_000_000;
+export const MAX_LINES = 200;
+
+/** A unit price a stored line can hold, or null (no price: the owner fills it in). */
+export function storablePrice(n: number | null): number | null {
+  return n !== null && Number.isSafeInteger(n) && n >= 0 && n <= MAX_UNIT_PRICE ? n : null;
+}
+
 /** "SVC" = free of charge, null = no unit price known, otherwise whole won. */
 export function lineAmount(line: QuoteLine): number | "SVC" | null {
   if (line.svc) return "SVC";
@@ -44,9 +54,10 @@ export function computeTotals(lines: QuoteLine[], vatIncluded: boolean): Totals 
   return { supply, vat, total: supply + vat, missingPrices };
 }
 
-function cleanQty(qty: number): number {
+/** Whole, 0 to MAX_QTY. */
+export function cleanQty(qty: number): number {
   if (!Number.isFinite(qty)) return 0;
-  return Math.max(0, Math.round(qty));
+  return Math.min(MAX_QTY, Math.max(0, Math.round(qty)));
 }
 
 /**
@@ -56,6 +67,7 @@ function cleanQty(qty: number): number {
  * 2. Otherwise an enabled sheet item with a price gets the sheet price.
  * 3. Otherwise the line is a hand line with no price, for the owner to fill in.
  * The tip is always the model's new one: tips are advice for this version, not agreed values.
+ * Stored lines stay readable: at most MAX_LINES lines, qty and price within the line schema.
  */
 export function buildLines(
   model: ModelLine[],
@@ -65,7 +77,7 @@ export function buildLines(
   const byId = new Map(sheet.map((item) => [item.id, item]));
   const claimed = new Set<number>();
 
-  return model.map((m) => {
+  return model.slice(0, MAX_LINES).map((m) => {
     const base = {
       label: m.label,
       content: m.content,
@@ -94,12 +106,13 @@ export function buildLines(
 
     const found = m.itemId === null ? undefined : byId.get(m.itemId);
     if (found && found.enabled) {
+      const unitPrice = storablePrice(found.unitPrice);
       return {
         ...base,
         itemId: found.id,
-        unitPrice: found.unitPrice,
+        unitPrice,
         // A sheet item without a price is no better than a typed-in line: the owner fills it in.
-        priceSource: found.unitPrice === null ? "hand" : "sheet",
+        priceSource: unitPrice === null ? "hand" : "sheet",
         svc: false,
       };
     }
@@ -108,7 +121,7 @@ export function buildLines(
   });
 }
 
-const won = (n: number | null) => (n === null ? "없음" : n.toLocaleString("ko-KR"));
+const won = (n: number | null) => (n === null ? "없음" : `${n.toLocaleString("ko-KR")}원`);
 
 /** Lines are matched by itemId (label when there is none); repeats pair up in order. Tips are not compared. */
 export function diffLines(prev: QuoteLine[], next: QuoteLine[]): string[] {
@@ -136,7 +149,7 @@ export function diffLines(prev: QuoteLine[], next: QuoteLine[]): string[] {
       out.push(`수량 ${old.qty.toLocaleString("ko-KR")}→${line.qty.toLocaleString("ko-KR")}: ${line.label}`);
     }
     if (old.unitPrice !== line.unitPrice) {
-      out.push(`단가 ${won(old.unitPrice)}→${won(line.unitPrice)}원: ${line.label}`);
+      out.push(`단가 ${won(old.unitPrice)}→${won(line.unitPrice)}: ${line.label}`);
     }
     if (old.svc !== line.svc) out.push(`${line.svc ? "SVC 켬" : "SVC 끔"}: ${line.label}`);
   }

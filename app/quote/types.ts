@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_QTY, MAX_UNIT_PRICE } from "./lines";
 
 export const PRICE_KINDS = ["per_person", "per_event"] as const;
 export type PriceKind = (typeof PRICE_KINDS)[number];
@@ -89,8 +90,8 @@ export const QuoteLineSchema = z.object({
   itemId: z.number().int().nullable(),
   label: z.string(),
   content: z.string(),
-  qty: z.number().int().min(0).max(100000),
-  unitPrice: z.number().int().min(0).max(100000000).nullable(),
+  qty: z.number().int().min(0).max(MAX_QTY),
+  unitPrice: z.number().int().min(0).max(MAX_UNIT_PRICE).nullable(),
   priceSource: z.enum(PRICE_SOURCES),
   svc: z.boolean(),
   menu: z.string(),

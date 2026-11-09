@@ -35,6 +35,7 @@ const KIND_LABELS: Record<WatchKind, string> = { rss: "블로그 글 (RSS)", pag
 
 /** Success text shown after a "지금 한 번 돌리기". */
 const ALREADY_RUNNING = "이미 돌고 있어요. 조금 뒤에 확인해 주세요.";
+const ALREADY_FINISHED = "이번 시간에 이미 돌렸어요. 다음 정시 뒤에 다시 눌러 주세요.";
 const RUN_NOW_MESSAGE = "감시를 시작했어요. 몇 분 뒤에 소식 탭을 새로 열어 확인해 주세요.";
 
 type ActionResult = { ok?: boolean; error?: string; message?: string } | undefined;
@@ -77,7 +78,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 function wholeNumber(raw: string): number {
-  if (!/^\d+$/.test(raw.trim())) throw new DomainError("INVALID_INPUT", "잘못된 요청입니다.");
+  if (!/^\d+$/.test(raw.trim())) throw new DomainError("INVALID_INPUT", "잘못된 요청이에요.");
   return Number(raw.trim());
 }
 
@@ -112,7 +113,9 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
       case "runNow": {
         const now = new Date();
         try {
-          if ((await startManualWatchRun(env.WATCH, now)) === "already_running") return { ok: true, message: ALREADY_RUNNING };
+          const started = await startManualWatchRun(env.WATCH, now);
+          if (started === "already_running") return { ok: true, message: ALREADY_RUNNING };
+          if (started === "already_finished") return { ok: true, message: ALREADY_FINISHED };
         } catch (e) {
           console.error("manual watch run failed to start", e);
           return { error: "감시를 시작하지 못했어요. 잠시 뒤에 다시 눌러 주세요." };
@@ -120,7 +123,7 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
         return { ok: true, message: RUN_NOW_MESSAGE };
       }
       default:
-        return { error: "잘못된 요청입니다." };
+        return { error: "잘못된 요청이에요." };
     }
   } catch (e) {
     if (e instanceof DomainError) return { error: e.message };
