@@ -143,7 +143,7 @@ describe("settings action: setAlert", () => {
   });
 
   it("unknown kind is still rejected and stores nothing", async () => {
-    expect(await post({ intent: "setAlert", kind: "bogus", enabled: "0" })).toEqual({ error: "잘못된 요청입니다." });
+    expect(await post({ intent: "setAlert", kind: "bogus", enabled: "0" })).toEqual({ error: "잘못된 요청이에요." });
     const rows = await db.select().from(settings).where(eq(settings.key, "alert_draft_ready_enabled"));
     expect(rows).toEqual([]);
   });

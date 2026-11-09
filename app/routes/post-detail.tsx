@@ -56,7 +56,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 
   const saveEdit = async () => {
     const body = str("body");
-    if (!channel || body === undefined) throw new DomainError("INVALID_INPUT", "잘못된 요청입니다.");
+    if (!channel || body === undefined) throw new DomainError("INVALID_INPUT", "잘못된 요청이에요.");
     const hashtags = str("hashtags");
     await saveDraftEdit(
       db,
@@ -93,7 +93,7 @@ export async function action({ request, params }: Route.ActionArgs) {
         await clearPostError(db, id);
         break;
       default:
-        return data<DraftActionResult>({ error: "잘못된 요청입니다.", intent }, { status: 400 });
+        return data<DraftActionResult>({ error: "잘못된 요청이에요.", intent }, { status: 400 });
     }
   } catch (e) {
     if (e instanceof DomainError) {
