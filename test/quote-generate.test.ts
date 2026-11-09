@@ -24,6 +24,7 @@ import {
   createQuote,
   deleteQuote,
   getQuote,
+  isUniqueViolation,
   listQuotes,
   requestRevision,
   saveEvent,
@@ -304,6 +305,16 @@ describe("requestRevision", () => {
     // A third tap after the first went through is BUSY too.
     expect(await requestRevision(db, quoteId, "더 싸게", T1).catch((e) => e)).toMatchObject({ code: "BUSY" });
     expect(await versionCount(quoteId)).toBe(2);
+  });
+
+  it("recognises the duplicate-version error a racing insert gets from D1", async () => {
+    const { quoteId } = await createQuote(db, { text: "다과 견적", source: "app" }, T0);
+    const err = await db
+      .insert(quoteVersions)
+      .values({ quoteId, version: 1, status: "generating", inputText: "x", createdAt: T0.toISOString() })
+      .catch((e: unknown) => e);
+    expect(isUniqueViolation(err)).toBe(true);
+    expect(isUniqueViolation(new Error("ECONNRESET"))).toBe(false);
   });
 
   it("a stale generating version is not BUSY but cannot be revised either", async () => {

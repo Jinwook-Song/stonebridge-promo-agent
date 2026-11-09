@@ -197,7 +197,8 @@ export function isFreshClaim(row: { status: VersionStatus; generationStartedAt: 
 
 const BUSY_MESSAGE = "견적을 만드는 중이에요. 끝난 뒤에 다시 요청해 주세요.";
 
-function isUniqueViolation(e: unknown): boolean {
+/** D1 reports it in the message; drizzle wraps the D1 error, so the cause chain is walked. */
+export function isUniqueViolation(e: unknown): boolean {
   for (let cur: unknown = e; cur instanceof Error; cur = cur.cause) {
     if (cur.message.includes("UNIQUE constraint failed")) return true;
   }
