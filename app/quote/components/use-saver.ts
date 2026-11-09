@@ -28,6 +28,8 @@ export function useJsonSaver(opts: {
   const started = useRef(false);
   const last = useRef<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // True from the moment a value is handed to save() until the server has it (or the save failed).
+  const [pending, setPending] = useState(false);
   const submitRef = useRef<(data: Record<string, string>) => void>(() => {});
   submitRef.current = (data) => void fetcher.submit(data, { method: "post", action: `/quotes/${quoteId}` });
 
@@ -46,6 +48,10 @@ export function useJsonSaver(opts: {
   const pumpRef = useRef(pump);
   pumpRef.current = pump;
 
+  function syncPending() {
+    setPending(sending.current !== null || queued.current !== null);
+  }
+
   useEffect(() => {
     if (fetcher.state !== "idle") {
       started.current = true;
@@ -61,6 +67,7 @@ export function useJsonSaver(opts: {
     }
     sending.current = null;
     pumpRef.current();
+    syncPending();
   }, [fetcher.state, fetcher.data]);
 
   return {
@@ -70,14 +77,18 @@ export function useJsonSaver(opts: {
       queued.current = json;
       setError(null);
       pump();
+      syncPending();
     },
     retry() {
       if (last.current === null) return;
       queued.current = last.current;
       setError(null);
       pump();
+      syncPending();
     },
     error,
     saving: fetcher.state !== "idle",
+    /** A value is waiting for or travelling to the server: the server's copy is older than the screen. */
+    pending,
   };
 }

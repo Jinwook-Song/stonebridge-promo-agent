@@ -386,6 +386,9 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
   const vatForm = vatFetcher.formData?.get("vat");
   const vatIncluded = vatForm == null ? quote.vatIncluded : vatForm === "1";
   const scope = `${quote.id}-${version.version}`;
+  // Lines on screen the server does not hold yet: the download would still have the old prices.
+  const [linesSync, setLinesSync] = useState<"saved" | "saving" | "failed">("saved");
+  const linesUnsaved = linesSync !== "saved";
 
   return (
     <>
@@ -414,6 +417,7 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
           vatIncluded={vatIncluded}
           sheet={sheet}
           readOnly={readOnly}
+          onUnsavedChange={setLinesSync}
         />
         {vatFetcher.state === "idle" && vatFetcher.data?.error && <ErrorLine>{vatFetcher.data.error}</ErrorLine>}
       </Section>
@@ -439,9 +443,16 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
 
       <div className="flex flex-col gap-3">
         <Button asChild variant="outline" size="lg" className="h-12">
-          <a href={`/quotes/${quote.id}/v/${version.version}/xlsx`}>
-            <DownloadIcon aria-hidden="true" />
-            엑셀 받기
+          <a
+            href={`/quotes/${quote.id}/v/${version.version}/xlsx`}
+            aria-disabled={linesUnsaved || undefined}
+            onClick={(e) => {
+              if (linesUnsaved) e.preventDefault();
+            }}
+            className={cn(linesUnsaved && "pointer-events-none opacity-60")}
+          >
+            {linesSync === "saving" ? <LoaderCircleIcon className="animate-spin" aria-hidden="true" /> : <DownloadIcon aria-hidden="true" />}
+            {linesSync === "saving" ? "저장 중…" : linesSync === "failed" ? "저장 못 한 내용이 있어요" : "엑셀 받기"}
           </a>
         </Button>
       </div>

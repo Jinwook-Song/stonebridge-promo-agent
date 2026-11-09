@@ -1,5 +1,5 @@
 import { CircleAlertIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import { Input, inputClass } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
@@ -64,6 +64,7 @@ export function LinesTable({
   vatIncluded,
   sheet,
   readOnly,
+  onUnsavedChange,
 }: {
   quoteId: number;
   version: number;
@@ -71,11 +72,20 @@ export function LinesTable({
   vatIncluded: boolean;
   sheet: SheetChoice[];
   readOnly: boolean;
+  /** While the lines on screen are not what the server holds ("saving", or "failed" until retried) a download would be stale. */
+  onUnsavedChange?: (state: "saved" | "saving" | "failed") => void;
 }) {
   const nextKey = useRef(initialLines.length);
   const [rows, setRows] = useState<Row[]>(() => initialLines.map((line, key) => ({ key, line })));
   const [focusKey, setFocusKey] = useState<number | null>(null);
   const saver = useJsonSaver({ quoteId, version, intent: "saveLines", field: "lines", initial: initialLines });
+  const syncState = saver.pending ? "saving" : saver.error !== null ? "failed" : "saved";
+  const syncRef = useRef(onUnsavedChange);
+  syncRef.current = onUnsavedChange;
+  useEffect(() => {
+    syncRef.current?.(syncState);
+  }, [syncState]);
+  useEffect(() => () => syncRef.current?.("saved"), []);
   const lines = rows.map((r) => r.line);
   const totals = computeTotals(lines, vatIncluded);
 
@@ -186,7 +196,7 @@ export function LinesTable({
             </div>
           </>
         )}
-        {!vatIncluded && <p className="text-xs text-muted-foreground">VAT는 별도예요.</p>}
+        {!vatIncluded && <p className="text-xs text-muted-foreground">VAT 없이 공급금액만 적어요.</p>}
         {totals.missingPrices > 0 && (
           <p className="mt-1 flex items-start gap-1.5 text-sm text-amber-800">
             <CircleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />

@@ -13,6 +13,7 @@ export default [
     route("quotes", "routes/quotes.tsx"),
     route("quotes/new", "routes/quote-new.tsx"),
     route("quotes/:id", "routes/quote-detail.tsx"),
+    route("quotes/:id/v/:version/xlsx", "routes/quote-xlsx.ts"),
     route("api/quotes/:id/status", "routes/api.quote-status.ts"),
     route("settings", "routes/settings.tsx"),
     route("settings/quote", "routes/quote-settings.tsx"),
