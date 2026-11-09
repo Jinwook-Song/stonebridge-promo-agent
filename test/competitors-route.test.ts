@@ -10,6 +10,7 @@ import { listWatchSources, saveWatchSource } from "../app/watch/sources.server";
 
 const db = getDb(env.DB);
 const T = "2026-11-09T03:00:00.000Z";
+const kstDate = (d: Date) => new Date(d.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
 
 beforeEach(async () => {
   await db.delete(competitorEvents);
@@ -63,6 +64,49 @@ describe("news tab", () => {
     await addEvent(a, 2, { client: "100% 맛집" });
     expect((await loadTab("?tab=news&q=%25")).events.map((e) => e.client)).toEqual(["100% 맛집"]);
     expect((await loadTab("?tab=news&q=_")).events).toEqual([]);
+  });
+
+  it("searches with a long Korean query (D1 caps LIKE patterns at 50 bytes) without throwing", async () => {
+    const long = "가나다라마바사아자차카타파하".repeat(2) + "거너더러머버"; // 30 characters
+    expect(long.length).toBe(34);
+    const a = await addSource();
+    await addEvent(a, 1, { client: "가짜병원", venue: long });
+    expect((await loadTab(`?tab=news&q=${encodeURIComponent(long)}`)).events.map((e) => e.client)).toEqual(["가짜병원"]);
+    expect((await loadTab(`?tab=news&q=${encodeURIComponent(long + "없음")}`)).events).toEqual([]);
+  });
+
+  it("matches letters in any case", async () => {
+    const a = await addSource("Demo Catering");
+    await addEvent(a, 1, { client: "가짜병원" });
+    expect((await listEvents(db, "demo CATER")).map((e) => e.client)).toEqual(["가짜병원"]);
+  });
+
+  it("shows the unfiltered list with a flag when the search query throws", async () => {
+    const a = await addSource();
+    await addEvent(a, 1, { client: "가짜병원" });
+    // A database that refuses the search statement (what D1 does for a too-complex LIKE pattern).
+    const realDb = env.DB;
+    (env as { DB: unknown }).DB = new Proxy(realDb, {
+      get(target, prop) {
+        if (prop === "prepare") {
+          return (sql: string) => {
+            if (sql.includes("instr(")) throw new Error("LIKE or GLOB pattern too complex");
+            return target.prepare(sql);
+          };
+        }
+        const value = Reflect.get(target, prop) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    let res;
+    try {
+      res = await loader({ request: new Request("http://localhost/competitors?tab=news&q=병원"), params: {}, context: {} } as never);
+    } finally {
+      (env as { DB: unknown }).DB = realDb;
+    }
+    expect(res.searchFailed).toBe(true);
+    expect(res.events).toHaveLength(1);
   });
 
   it("lists newest first, at most 100, with source link, seen date, menu and notes", async () => {
@@ -178,14 +222,46 @@ describe("sources tab actions", () => {
       (env as { WATCH: unknown }).WATCH = real;
     });
 
-    it("starts a manual Workflow instance of its own", async () => {
-      const create = vi.fn(async ({ id }: { id?: string }) => ({ id }));
-      (env as { WATCH: unknown }).WATCH = { create, get: vi.fn(async () => ({})) };
+    /** A fake Workflow binding: instances by id with a status; create adds a running one. */
+    function fakeWatch(initial: Record<string, string> = {}) {
+      const instances = new Map(Object.entries(initial));
+      const create = vi.fn(async ({ id }: { id: string }) => {
+        if (instances.has(id)) throw new Error("instance.already_exists");
+        instances.set(id, "running");
+        return { id };
+      });
+      const get = vi.fn(async (id: string) => {
+        if (!instances.has(id)) throw new Error("instance.not_found");
+        return { status: async () => ({ status: instances.get(id)! }) };
+      });
+      (env as { WATCH: unknown }).WATCH = { create, get };
+      return { create, instances };
+    }
 
+    it("starts a manual instance, once per KST hour", async () => {
+      const { create } = fakeWatch();
       const res = await post({ intent: "runNow" });
-      expect(res).toMatchObject({ ok: true, message: expect.stringContaining("시작") });
+      expect(res).toMatchObject({ ok: true, message: expect.stringContaining("시작했어요") });
       expect(create).toHaveBeenCalledTimes(1);
-      expect(create.mock.calls[0]![0].id).toMatch(/^watch-manual-\d+$/);
+      expect(create.mock.calls[0]![0].id).toMatch(/^watch-manual-\d{4}-\d{2}-\d{2}-\d{2}$/);
+
+      // A second tap in the same hour: the first is still running, nothing new starts.
+      const again = await post({ intent: "runNow" });
+      expect(again).toMatchObject({ ok: true, message: expect.stringContaining("이미 돌고 있어요") });
+      expect(create).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not start while today's cron run is going", async () => {
+      const { create } = fakeWatch({ [`watch-${kstDate(new Date())}`]: "running" });
+      const res = await post({ intent: "runNow" });
+      expect(res).toMatchObject({ message: "이미 돌고 있어요. 조금 뒤에 확인해 주세요." });
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it("starts when today's cron run is already complete", async () => {
+      const { create } = fakeWatch({ [`watch-${kstDate(new Date())}`]: "complete" });
+      expect(await post({ intent: "runNow" })).toMatchObject({ message: expect.stringContaining("시작했어요") });
+      expect(create).toHaveBeenCalledTimes(1);
     });
 
     it("says so when the Workflow could not start", async () => {

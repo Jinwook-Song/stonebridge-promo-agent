@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, or, sql, type SQLWrapper } from "drizzle-orm";
 import { competitorEvents, competitorPrices, watchSources } from "../../database/schema";
 import type { Db } from "../server/db";
 
@@ -55,22 +55,19 @@ function stringList(json: string | null): string[] {
   }
 }
 
-/** Case-insensitive contains pattern with LIKE's own characters taken literally. */
-function likePattern(q: string): string {
-  return `%${q.replace(/[\\%_]/g, "\\$&")}%`;
-}
-
 /**
  * Newest 100 events (by when they were seen), optionally those whose competitor, client or venue
  * contains `q`.
  */
 export async function listEvents(db: Db, q: string): Promise<EventView[]> {
   const text = q.trim().slice(0, MAX_QUERY_CHARS);
-  const like = likePattern(text);
+  // instr, not LIKE: D1 caps a LIKE pattern at 50 bytes (about 15 Korean characters), instr has no
+  // limit and takes % and _ literally.
+  const has = (column: SQLWrapper) => sql`instr(lower(${column}), lower(${text})) > 0`;
   const match =
     text === ""
       ? undefined
-      : sql`(${watchSources.name} LIKE ${like} ESCAPE '\\' OR ${competitorEvents.client} LIKE ${like} ESCAPE '\\' OR ${competitorEvents.venue} LIKE ${like} ESCAPE '\\')`;
+      : or(has(watchSources.name), has(competitorEvents.client), has(competitorEvents.venue));
   const rows = await db
     .select({ event: competitorEvents, sourceName: watchSources.name })
     .from(competitorEvents)

@@ -427,6 +427,36 @@ export async function startWatchRun(
   }
 }
 
+/** Instance states in which a run is still going (or about to). */
+const ACTIVE_STATES = new Set(["queued", "running", "waiting", "waitingForPause", "paused"]);
+
+async function isActive(workflow: Pick<Workflow, "get">, id: string): Promise<boolean> {
+  try {
+    const { status } = await (await workflow.get(id)).status();
+    return ACTIVE_STATES.has(status);
+  } catch {
+    // No such instance.
+    return false;
+  }
+}
+
+/**
+ * The owner's "run it now". Does nothing (already_running) while today's cron run or this hour's
+ * manual run is still going, so taps and the cron cannot pile up runs that each spend the Claude
+ * budget. Its instance id is per KST hour, so a second tap in the same hour finds the first.
+ */
+export async function startManualWatchRun(
+  workflow: Pick<Workflow, "create" | "get">,
+  now: Date,
+): Promise<"started" | "already_running"> {
+  const hour = String(new Date(now.getTime() + 9 * 3600_000).getUTCHours()).padStart(2, "0");
+  const manualId = `watch-manual-${kst(now).date}-${hour}`;
+  for (const id of [`watch-${kst(now).date}`, manualId]) {
+    if (await isActive(workflow, id)) return "already_running";
+  }
+  return (await startWatchRun(workflow, now, manualId)) === "started" ? "started" : "already_running";
+}
+
 export function makeWatchDeps(env: Env, db: Db): WatchDeps {
   // Typed as its wrangler.jsonc default ("0"); only a local .dev.vars turns it on.
   const fakeClaude: string = env.FAKE_CLAUDE;

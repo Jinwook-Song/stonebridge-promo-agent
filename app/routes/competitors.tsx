@@ -18,7 +18,7 @@ import {
   type PriceView,
 } from "../watch/competitors.server";
 import { safeHref, seenDate, won } from "../watch/format";
-import { startWatchRun } from "../watch/run.server";
+import { startManualWatchRun } from "../watch/run.server";
 import { deleteWatchSource, listWatchSources, saveWatchSource, type WatchSource } from "../watch/sources.server";
 import { WATCH_KINDS, type WatchKind } from "../watch/types";
 
@@ -34,6 +34,7 @@ type TabId = (typeof TABS)[number]["id"];
 const KIND_LABELS: Record<WatchKind, string> = { rss: "블로그 글 (RSS)", page: "가격 페이지" };
 
 /** Success text shown after a "지금 한 번 돌리기". */
+const ALREADY_RUNNING = "이미 돌고 있어요. 조금 뒤에 확인해 주세요.";
 const RUN_NOW_MESSAGE = "감시를 시작했어요. 몇 분 뒤에 소식 탭을 새로 열어 확인해 주세요.";
 
 type ActionResult = { ok?: boolean; error?: string; message?: string } | undefined;
@@ -51,11 +52,25 @@ export async function loader({ request }: Route.LoaderArgs) {
   const tab = parseTab(url.searchParams.get("tab"));
   const q = (url.searchParams.get("q") ?? "").trim();
   const db = getDb(env.DB);
+  // A search that fails shows the unfiltered list and says so, not an error page.
+  let events: EventView[] = [];
+  let searchFailed = false;
+  if (tab === "news") {
+    try {
+      events = await listEvents(db, q);
+    } catch (e) {
+      if (q === "") throw e;
+      console.error("competitor search failed", e);
+      searchFailed = true;
+      events = await listEvents(db, "");
+    }
+  }
   // Only the open tab's data is read.
   return {
     tab,
     q,
-    events: tab === "news" ? await listEvents(db, q) : [],
+    searchFailed,
+    events,
     prices: tab === "prices" ? await listPriceGroups(db) : [],
     sources: tab === "sources" ? await listWatchSources(db) : [],
   };
@@ -97,8 +112,7 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
       case "runNow": {
         const now = new Date();
         try {
-          // Its own instance id: today's cron run (or an earlier manual one) does not block it.
-          await startWatchRun(env.WATCH, now, `watch-manual-${now.getTime()}`);
+          if ((await startManualWatchRun(env.WATCH, now)) === "already_running") return { ok: true, message: ALREADY_RUNNING };
         } catch (e) {
           console.error("manual watch run failed to start", e);
           return { error: "감시를 시작하지 못했어요. 잠시 뒤에 다시 눌러 주세요." };
@@ -135,7 +149,7 @@ function Message({ result, success }: { result: ActionResult; success?: string }
 }
 
 export default function Competitors({ loaderData }: Route.ComponentProps) {
-  const { tab, q, events, prices, sources } = loaderData;
+  const { tab, q, searchFailed, events, prices, sources } = loaderData;
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-lg font-semibold">경쟁 업체</h1>
@@ -155,7 +169,7 @@ export default function Competitors({ loaderData }: Route.ComponentProps) {
           </NavLink>
         ))}
       </nav>
-      {tab === "news" && <NewsTab q={q} events={events} />}
+      {tab === "news" && <NewsTab q={q} searchFailed={searchFailed} events={events} />}
       {tab === "prices" && <PricesTab groups={prices} />}
       {tab === "sources" && <SourcesTab sources={sources} />}
     </div>
@@ -189,7 +203,7 @@ function Source({ url, seenAt }: { url: string; seenAt: string }) {
 
 // ---- 소식 ----------------------------------------------------------------------------------
 
-function NewsTab({ q, events }: { q: string; events: EventView[] }) {
+function NewsTab({ q, searchFailed, events }: { q: string; searchFailed: boolean; events: EventView[] }) {
   return (
     <div className="flex flex-col gap-3">
       <Form method="get" role="search" className="flex gap-2">
@@ -200,7 +214,12 @@ function NewsTab({ q, events }: { q: string; events: EventView[] }) {
           찾기
         </Button>
       </Form>
-      {q !== "" && (
+      {searchFailed && (
+        <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+          검색하지 못해서 전체 소식을 보여 드려요. 잠시 뒤에 다시 찾아 주세요.
+        </p>
+      )}
+      {q !== "" && !searchFailed && (
         <p className="flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
           <span>'{q}' 검색 결과 {events.length}개</span>
           <Link to="/competitors?tab=news" className="flex min-h-11 items-center underline underline-offset-2">
