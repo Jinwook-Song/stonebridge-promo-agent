@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { addCandidates, applyPicks, removeCandidate, toggle, type Selection } from "../app/promo/photo-selection";
+import {
+  addCandidates,
+  applyPicks,
+  isErrorBody,
+  readPicks,
+  removeCandidate,
+  toggle,
+  type Selection,
+} from "../app/promo/photo-selection";
 import { MAX_PHOTOS } from "../app/promo/types";
 
 const empty: Selection = { order: [], reasons: {} };
@@ -116,5 +124,37 @@ describe("applyPicks", () => {
   it("keeps the current selection when no pick is still present", () => {
     const before: Selection = { order: [1, 2], reasons: {} };
     expect(applyPicks(before, [{ n: 1, reason: "gone" }], [9], new Set([1, 2]))).toBe(before);
+  });
+});
+
+describe("readPicks", () => {
+  it("keeps well-formed picks in order", () => {
+    expect(readPicks({ picks: [{ n: 2, reason: "전체 모습" }, { n: 1, reason: "포장" }] })).toEqual([
+      { n: 2, reason: "전체 모습" },
+      { n: 1, reason: "포장" },
+    ]);
+  });
+
+  it("drops malformed entries and returns null when none survive", () => {
+    expect(readPicks({ picks: [{ n: "2", reason: "x" }, null, { n: 3 }, { n: 4, reason: "ok" }] })).toEqual([
+      { n: 4, reason: "ok" },
+    ]);
+    expect(readPicks({ picks: [{ n: "2", reason: "x" }] })).toBeNull();
+    expect(readPicks({ picks: [] })).toBeNull();
+  });
+
+  it("returns null for bodies that are not a picks object", () => {
+    for (const body of [null, undefined, "picks", 3, [], {}, { picks: "1,2" }, { error: "실패" }]) {
+      expect(readPicks(body)).toBeNull();
+    }
+  });
+});
+
+describe("isErrorBody", () => {
+  it("accepts only an object with a string error", () => {
+    expect(isErrorBody({ error: "사진을 고르지 못했어요." })).toBe(true);
+    for (const body of [null, undefined, "error", {}, { error: 500 }, { picks: [] }]) {
+      expect(isErrorBody(body)).toBe(false);
+    }
   });
 });

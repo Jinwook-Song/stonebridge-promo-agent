@@ -137,6 +137,8 @@ describe("settings action: setAlert", () => {
   it("draft_ready on turns it back on", async () => {
     await post({ intent: "setAlert", kind: "draft_ready", enabled: "0" });
     await post({ intent: "setAlert", kind: "draft_ready", enabled: "1" });
+    const [row] = await db.select().from(settings).where(eq(settings.key, "alert_draft_ready_enabled"));
+    expect(row.value).toBe("1");
     expect((await getAlertSettings(db)).draftReadyEnabled).toBe(true);
   });
 

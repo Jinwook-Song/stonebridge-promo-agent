@@ -2,7 +2,16 @@ import { CircleAlertIcon, ImagePlusIcon, SparklesIcon, XIcon } from "lucide-reac
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { cn } from "../../lib/utils";
-import { addCandidates, applyPicks, removeCandidate, toggle, type Pick, type Selection } from "../photo-selection";
+import {
+  addCandidates,
+  applyPicks,
+  isErrorBody,
+  readPicks,
+  removeCandidate,
+  toggle,
+  type Pick,
+  type Selection,
+} from "../photo-selection";
 import { resizeToJpeg } from "../resize-image.client";
 import { MAX_PHOTOS, MAX_PICK_CANDIDATES, type PostKind } from "../types";
 
@@ -187,23 +196,6 @@ export function usePhotoPicker() {
 }
 
 export type PhotoPickerState = ReturnType<typeof usePhotoPicker>;
-
-/** `{ picks: [{ n, reason }] }` with at least one well-formed pick, else null. */
-function readPicks(data: unknown): Pick[] | null {
-  if (typeof data !== "object" || data === null || !Array.isArray((data as { picks?: unknown }).picks)) return null;
-  const picks = (data as { picks: unknown[] }).picks.filter(
-    (p): p is Pick =>
-      typeof p === "object" &&
-      p !== null &&
-      typeof (p as Pick).n === "number" &&
-      typeof (p as Pick).reason === "string",
-  );
-  return picks.length ? picks : null;
-}
-
-function isErrorBody(data: unknown): data is { error: string } {
-  return typeof data === "object" && data !== null && typeof (data as { error?: unknown }).error === "string";
-}
 
 export function PhotoPicker({
   picker,

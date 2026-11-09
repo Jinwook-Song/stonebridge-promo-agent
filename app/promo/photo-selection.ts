@@ -62,3 +62,20 @@ function drop(sel: Selection, id: number): Selection {
   delete reasons[id];
   return { order: sel.order.filter((x) => x !== id), reasons };
 }
+
+/** `{ picks: [{ n, reason }] }` with at least one well-formed pick, else null. */
+export function readPicks(data: unknown): Pick[] | null {
+  if (typeof data !== "object" || data === null || !Array.isArray((data as { picks?: unknown }).picks)) return null;
+  const picks = (data as { picks: unknown[] }).picks.filter(
+    (p): p is Pick =>
+      typeof p === "object" &&
+      p !== null &&
+      typeof (p as Pick).n === "number" &&
+      typeof (p as Pick).reason === "string",
+  );
+  return picks.length ? picks : null;
+}
+
+export function isErrorBody(data: unknown): data is { error: string } {
+  return typeof data === "object" && data !== null && typeof (data as { error?: unknown }).error === "string";
+}
