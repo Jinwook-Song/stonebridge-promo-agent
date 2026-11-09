@@ -22,6 +22,8 @@ beforeEach(async () => {
         "channel_rules",
         "owner_password_hash",
         "alert_draft_ready_enabled",
+        "alert_monthly_day",
+        "alert_monthly_day2",
       ]),
     );
 });
@@ -146,5 +148,31 @@ describe("settings action: setAlert", () => {
     expect(await post({ intent: "setAlert", kind: "bogus", enabled: "0" })).toEqual({ error: "잘못된 요청이에요." });
     const rows = await db.select().from(settings).where(eq(settings.key, "alert_draft_ready_enabled"));
     expect(rows).toEqual([]);
+  });
+});
+
+describe("settings action: setMonthlyDay", () => {
+  it("saves one or two days", async () => {
+    expect(await post({ intent: "setMonthlyDay", day: "1", day2: "15" })).toEqual({ ok: true });
+    expect(await getAlertSettings(db)).toMatchObject({ monthlyDay: 1, monthlyDay2: 15 });
+  });
+
+  it("a blank second day means once a month", async () => {
+    await post({ intent: "setMonthlyDay", day: "1", day2: "15" });
+    await post({ intent: "setMonthlyDay", day: "5", day2: " " });
+    expect(await getAlertSettings(db)).toMatchObject({ monthlyDay: 5, monthlyDay2: null });
+  });
+
+  it("works without a day2 field at all", async () => {
+    await post({ intent: "setMonthlyDay", day: "7" });
+    expect(await getAlertSettings(db)).toMatchObject({ monthlyDay: 7, monthlyDay2: null });
+  });
+
+  it("rejects a bad or repeated second day and saves nothing", async () => {
+    for (const day2 of ["0", "32", "x", "10"]) {
+      const res = await post({ intent: "setMonthlyDay", day: "10", day2 });
+      expect(res).toHaveProperty("error");
+    }
+    expect(await getAlertSettings(db)).toMatchObject({ monthlyDay: 1, monthlyDay2: null });
   });
 });

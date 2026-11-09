@@ -1,6 +1,6 @@
 # 카카오톡 알림
 
-사장님 카톡 '나와의 채팅'으로 알림을 보낸다: **매일 23:20 쿠팡 발주 알림**, **매달 정한 날 10:00 홍보글 알림**. 카카오 REST API **나에게 보내기**(`POST https://kapi.kakao.com/v2/api/talk/memo/default/send`)를 쓴다. 아래 "되는가"는 2026-11-08에 문서로 확인한 내용이다. 코드 설계: [plans/2026-11-08-kakao-alerts.md](superpowers/plans/2026-11-08-kakao-alerts.md).
+사장님 카톡 '나와의 채팅'으로 알림을 보낸다: **매일 23:20 쿠팡 발주 알림**, **매달 정한 날(한두 번) 10:00 홍보글 알림**. 카카오 REST API **나에게 보내기**(`POST https://kapi.kakao.com/v2/api/talk/memo/default/send`)를 쓴다. 아래 "되는가"는 2026-11-08에 문서로 확인한 내용이다. 코드 설계: [plans/2026-11-08-kakao-alerts.md](superpowers/plans/2026-11-08-kakao-alerts.md).
 
 ## 앱에서 (콘솔 설정 뒤)
 

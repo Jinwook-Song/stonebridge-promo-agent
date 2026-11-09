@@ -13,7 +13,7 @@ import type { AlertKind } from "./types";
 export const CRONS = {
   /** 23:20 KST — she orders cafe supplies on Coupang after closing. */
   order: "20 14 * * *",
-  /** 10:00 KST daily; sends only on her chosen day of the month. */
+  /** 10:00 KST daily; sends only on her chosen day(s) of the month. */
   monthly: "0 1 * * *",
 } as const satisfies Record<AlertKind, string>;
 
@@ -22,6 +22,8 @@ export type AlertSettings = {
   monthlyEnabled: boolean;
   /** 1–31; months without that day use their last day. */
   monthlyDay: number;
+  /** Optional second day, same rules; null = once a month. She posts "한 달에 한두 번". */
+  monthlyDay2: number | null;
   /** Message when a full draft is ready. On unless switched off: she asked for it by uploading. */
   draftReadyEnabled: boolean;
 };
@@ -30,6 +32,7 @@ const KEYS = {
   orderEnabled: "alert_order_enabled",
   monthlyEnabled: "alert_monthly_enabled",
   monthlyDay: "alert_monthly_day",
+  monthlyDay2: "alert_monthly_day2",
   draftReadyEnabled: "alert_draft_ready_enabled",
 } as const satisfies Record<keyof AlertSettings, string>;
 
@@ -38,19 +41,25 @@ const DEFAULT_MONTHLY_DAY = 1;
 export async function getAlertSettings(db: Db): Promise<AlertSettings> {
   const rows = await db.select().from(settings).where(inArray(settings.key, Object.values(KEYS)));
   const byKey = new Map(rows.map((r) => [r.key, r.value]));
-  const day = Number(byKey.get(KEYS.monthlyDay));
+  const day = parseMonthlyDay(byKey.get(KEYS.monthlyDay) ?? "") ?? DEFAULT_MONTHLY_DAY;
+  const day2 = parseMonthlyDay(byKey.get(KEYS.monthlyDay2) ?? "");
   return {
     // Off unless turned on: connecting alone must not start nightly pings.
     orderEnabled: byKey.get(KEYS.orderEnabled) === "1",
     monthlyEnabled: byKey.get(KEYS.monthlyEnabled) === "1",
-    monthlyDay: Number.isInteger(day) && day >= 1 && day <= 31 ? day : DEFAULT_MONTHLY_DAY,
+    monthlyDay: day,
+    // Stored as "" when cleared; a copy of the first day counts as no second day.
+    monthlyDay2: day2 === day ? null : day2,
     // Only an explicit "0" turns it off; no row yet means on.
     draftReadyEnabled: byKey.get(KEYS.draftReadyEnabled) !== "0",
   };
 }
 
 export function parseMonthlyDay(raw: string): number | null {
-  const day = Number(raw.trim());
+  const trimmed = raw.trim();
+  // Number("") is 0, already out of range; the explicit check keeps that from being an accident.
+  if (trimmed === "") return null;
+  const day = Number(trimmed);
   return Number.isInteger(day) && day >= 1 && day <= 31 ? day : null;
 }
 
@@ -61,6 +70,9 @@ export async function saveAlertSettings(db: Db, patch: Partial<AlertSettings>): 
     values.push({ key: KEYS.monthlyEnabled, value: patch.monthlyEnabled ? "1" : "0" });
   }
   if (patch.monthlyDay !== undefined) values.push({ key: KEYS.monthlyDay, value: String(patch.monthlyDay) });
+  if (patch.monthlyDay2 !== undefined) {
+    values.push({ key: KEYS.monthlyDay2, value: patch.monthlyDay2 === null ? "" : String(patch.monthlyDay2) });
+  }
   if (patch.draftReadyEnabled !== undefined) {
     values.push({ key: KEYS.draftReadyEnabled, value: patch.draftReadyEnabled ? "1" : "0" });
   }
@@ -149,8 +161,11 @@ export async function runScheduled(cron: string, now: Date, deps: ScheduledDeps)
     periodKey = today.date;
   } else {
     if (!alerts.monthlyEnabled) return "disabled";
-    if (today.day !== Math.min(alerts.monthlyDay, today.daysInMonth)) return "not_today";
-    periodKey = today.month;
+    const days = [alerts.monthlyDay, alerts.monthlyDay2].filter((d): d is number => d !== null);
+    if (!days.some((d) => today.day === Math.min(d, today.daysInMonth))) return "not_today";
+    // Per date, not per month: two days a month send twice, and 30/31 both landing on Feb 28 send
+    // once. Moving the day later in a month that already got one sends again on the new day.
+    periodKey = today.date;
   }
   if (!(await getLink(deps.db))) return "not_linked";
 

@@ -14,6 +14,7 @@ import {
   type ScheduledDeps,
 } from "../app/kakao/alerts.server";
 import { MEMO_TEXT_LIMIT, type Fetch } from "../app/kakao/client.server";
+import { monthlyDaysText } from "../app/kakao/types";
 import { getDb } from "../app/server/db";
 import { WATCH_CRON } from "../app/watch/run.server";
 import wranglerConfig from "../wrangler.jsonc?raw";
@@ -51,7 +52,7 @@ beforeEach(async () => {
   await db.delete(kakaoLink);
   await db
     .delete(settings)
-    .where(inArray(settings.key, ["alert_order_enabled", "alert_monthly_enabled", "alert_monthly_day", "alert_draft_ready_enabled"]));
+    .where(inArray(settings.key, ["alert_order_enabled", "alert_monthly_enabled", "alert_monthly_day", "alert_monthly_day2", "alert_draft_ready_enabled"]));
 });
 
 afterEach(() => {
@@ -71,11 +72,12 @@ describe("kst", () => {
 });
 
 describe("alert settings", () => {
-  it("default to off, day 1", async () => {
+  it("default to off, day 1, no second day", async () => {
     expect(await getAlertSettings(db)).toEqual({
       orderEnabled: false,
       monthlyEnabled: false,
       monthlyDay: 1,
+      monthlyDay2: null,
       draftReadyEnabled: true,
     });
   });
@@ -88,8 +90,28 @@ describe("alert settings", () => {
       orderEnabled: false,
       monthlyEnabled: true,
       monthlyDay: 15,
+      monthlyDay2: null,
       draftReadyEnabled: true,
     });
+  });
+
+  it("second day saves and clears", async () => {
+    await saveAlertSettings(db, { monthlyDay: 1, monthlyDay2: 15 });
+    expect(await getAlertSettings(db)).toMatchObject({ monthlyDay: 1, monthlyDay2: 15 });
+    await saveAlertSettings(db, { monthlyDay: 3 });
+    expect((await getAlertSettings(db)).monthlyDay2).toBe(15);
+    await saveAlertSettings(db, { monthlyDay2: null });
+    expect((await getAlertSettings(db)).monthlyDay2).toBeNull();
+  });
+
+  it("a second day equal to the first reads as none", async () => {
+    await saveAlertSettings(db, { monthlyDay: 15, monthlyDay2: 15 });
+    expect(await getAlertSettings(db)).toMatchObject({ monthlyDay: 15, monthlyDay2: null });
+  });
+
+  it("monthlyDaysText lists one or two days, earlier first", () => {
+    expect(monthlyDaysText(1, null)).toBe("1일");
+    expect(monthlyDaysText(20, 5)).toBe("5일·20일");
   });
 
   it("parseMonthlyDay accepts 1–31 only", () => {
@@ -205,7 +227,7 @@ describe("runScheduled: 발주 알림", () => {
 describe("runScheduled: 홍보글 알림", () => {
   const at10 = (isoDate: string) => new Date(`${isoDate}T01:00:00Z`);
 
-  it("sends only on the chosen KST day, once per month", async () => {
+  it("sends only on the chosen KST day, once that day", async () => {
     await saveAlertSettings(db, { monthlyEnabled: true, monthlyDay: 15 });
     await link();
     const fetch = okFetch();
@@ -213,7 +235,30 @@ describe("runScheduled: 홍보글 알림", () => {
     expect(await runScheduled(CRONS.monthly, at10("2026-11-15"), deps(fetch))).toBe("sent");
     expect(await runScheduled(CRONS.monthly, at10("2026-11-15"), deps(fetch))).toBe("already_sent");
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect((await recentAlerts(db))[0]).toMatchObject({ kind: "monthly", periodKey: "2026-11" });
+    expect((await recentAlerts(db))[0]).toMatchObject({ kind: "monthly", periodKey: "2026-11-15" });
+  });
+
+  it("sends on both chosen days, once each", async () => {
+    await saveAlertSettings(db, { monthlyEnabled: true, monthlyDay: 1, monthlyDay2: 15 });
+    await link();
+    const fetch = okFetch();
+    expect(await runScheduled(CRONS.monthly, at10("2026-11-01"), deps(fetch))).toBe("sent");
+    expect(await runScheduled(CRONS.monthly, at10("2026-11-01"), deps(fetch))).toBe("already_sent");
+    expect(await runScheduled(CRONS.monthly, at10("2026-11-08"), deps(fetch))).toBe("not_today");
+    expect(await runScheduled(CRONS.monthly, at10("2026-11-15"), deps(fetch))).toBe("sent");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect((await recentAlerts(db)).map((a) => a.periodKey)).toEqual(["2026-11-15", "2026-11-01"]);
+  });
+
+  it("two days landing on the same short-month last day send once", async () => {
+    await saveAlertSettings(db, { monthlyEnabled: true, monthlyDay: 30, monthlyDay2: 31 });
+    // Default fixture tokens expire 2027-01-01, before this Feb 2027 date.
+    await link({ accessExpiresAt: "2027-06-01T00:00:00Z", refreshExpiresAt: "2027-06-01T00:00:00Z" });
+    const fetch = okFetch();
+    expect(await runScheduled(CRONS.monthly, at10("2027-02-27"), deps(fetch))).toBe("not_today");
+    expect(await runScheduled(CRONS.monthly, at10("2027-02-28"), deps(fetch))).toBe("sent");
+    expect(await runScheduled(CRONS.monthly, at10("2027-02-28"), deps(fetch))).toBe("already_sent");
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("uses the last day in months without the chosen day", async () => {

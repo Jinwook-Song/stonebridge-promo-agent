@@ -25,7 +25,7 @@ import {
   type AlertSettings,
 } from "../kakao/alerts.server";
 import { describeKakaoError, disconnect, getLink, kakaoConfig, linkExpired, sendToMe } from "../kakao/link.server";
-import { ALERT_LABELS, type AlertKind, type AlertStatus } from "../kakao/types";
+import { ALERT_LABELS, monthlyDaysText, type AlertKind, type AlertStatus } from "../kakao/types";
 import type { KakaoResult } from "./kakao.callback";
 import { formatDay } from "../promo/format-date";
 import { CHANNEL_LABELS, KIND_LABELS, POST_KINDS, type Channel, type PostKind } from "../promo/types";
@@ -121,7 +121,12 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
       case "setMonthlyDay": {
         const day = parseMonthlyDay(str("day"));
         if (day === null) return { error: "1부터 31 사이 날짜를 적어 주세요." };
-        await saveAlertSettings(db, { monthlyDay: day });
+        // Blank or missing second box = once a month.
+        const raw2 = str("day2").trim();
+        const day2 = raw2 === "" ? null : parseMonthlyDay(raw2);
+        if (raw2 !== "" && day2 === null) return { error: "두 번째 날짜도 1부터 31 사이로 적어 주세요." };
+        if (day2 === day) return { error: "두 날짜가 같아요. 다른 날을 적거나 두 번째 칸을 비워 주세요." };
+        await saveAlertSettings(db, { monthlyDay: day, monthlyDay2: day2 });
         break;
       }
       case "setExampleEnabled":
@@ -448,10 +453,10 @@ function KakaoSection({ kakao }: { kakao: KakaoView }) {
       <AlertToggle
         kind="monthly"
         enabled={kakao.alerts.monthlyEnabled}
-        description={`매달 ${kakao.alerts.monthlyDay}일 오전 10시, 홍보글 올릴 때 알림`}
+        description={`매달 ${monthlyDaysText(kakao.alerts.monthlyDay, kakao.alerts.monthlyDay2)} 오전 10시, 홍보글 올릴 때 알림`}
         canSend={ready}
       >
-        <MonthlyDay day={kakao.alerts.monthlyDay} />
+        <MonthlyDay day={kakao.alerts.monthlyDay} day2={kakao.alerts.monthlyDay2} />
       </AlertToggle>
 
       {kakao.recent.length > 0 && (
@@ -527,28 +532,44 @@ function AlertToggle({
   );
 }
 
-function MonthlyDay({ day }: { day: number }) {
+function MonthlyDay({ day, day2 }: { day: number; day2: number | null }) {
   const fetcher = useFetcher<ActionResult>();
   return (
-    <fetcher.Form method="post" className="flex items-center gap-2" key={day}>
+    <fetcher.Form method="post" className="flex flex-col gap-2" key={`${day}-${day2 ?? ""}`}>
       <input type="hidden" name="intent" value="setMonthlyDay" />
-      <label htmlFor="monthly-day" className="text-sm text-muted-foreground">
-        매달
-      </label>
-      <Input
-        id="monthly-day"
-        name="day"
-        type="number"
-        inputMode="numeric"
-        min={1}
-        max={31}
-        defaultValue={day}
-        className="h-11 w-20"
-      />
-      <span className="text-sm text-muted-foreground">일</span>
-      <Button type="submit" variant="outline" className="h-11" disabled={fetcher.state !== "idle"}>
-        날짜 저장
-      </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm text-muted-foreground">매달</span>
+        <Input
+          id="monthly-day"
+          name="day"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={31}
+          required
+          defaultValue={day}
+          aria-label="첫 번째 날짜"
+          className="h-11 w-20"
+        />
+        <span className="text-sm text-muted-foreground">일,</span>
+        <Input
+          id="monthly-day2"
+          name="day2"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={31}
+          defaultValue={day2 ?? ""}
+          placeholder="없음"
+          aria-label="두 번째 날짜 (비우면 한 달에 한 번)"
+          className="h-11 w-20"
+        />
+        <span className="text-sm text-muted-foreground">일</span>
+        <Button type="submit" variant="outline" className="h-11" disabled={fetcher.state !== "idle"}>
+          날짜 저장
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">두 번째 칸을 비우면 한 달에 한 번만 보내요.</p>
       {fetcher.data?.error && (
         <p role="alert" className="text-sm text-destructive">
           {fetcher.data.error}
