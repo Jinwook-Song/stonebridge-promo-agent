@@ -1,5 +1,5 @@
 import { CircleAlertIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Field } from "../../components/ui/label";
@@ -30,6 +30,7 @@ export function EventForm({
   initialEvent,
   readOnly,
   onUnsavedChange,
+  onHeadcountChange,
 }: {
   quoteId: number;
   version: number;
@@ -37,11 +38,15 @@ export function EventForm({
   readOnly: boolean;
   /** Like LinesTable's: the Excel button waits while the event on screen is not saved. */
   onUnsavedChange?: (state: SyncState) => void;
+  /** Once per headcount change, when she leaves the box (the quote table moves its 1인 lines). */
+  onHeadcountChange?: (from: number | null, to: number | null) => void;
 }) {
   const [event, setEvent] = useState(initialEvent);
   const [headcountText, setHeadcountText] = useState(initialEvent.headcount === null ? "" : String(initialEvent.headcount));
   const saver = useJsonSaver({ quoteId, version, intent: "saveEvent", field: "event", initial: initialEvent });
   useReportSync(saver, onUnsavedChange);
+
+  const lastHeadcount = useRef(initialEvent.headcount);
 
   const set = (patch: Partial<QuoteEvent>) => setEvent((prev) => ({ ...prev, ...patch }));
 
@@ -99,7 +104,14 @@ export function EventForm({
               setHeadcountText(text);
               set({ headcount: text === "" ? null : Number(text) });
             }}
-            onBlur={() => saver.save(event)}
+            onBlur={() => {
+              saver.save(event);
+              if (event.headcount !== lastHeadcount.current) {
+                const from = lastHeadcount.current;
+                lastHeadcount.current = event.headcount;
+                onHeadcountChange?.(from, event.headcount);
+              }
+            }}
             className="h-11"
           />
         </Field>

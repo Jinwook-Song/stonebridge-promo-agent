@@ -14,7 +14,7 @@ import { useStatusPolling } from "../promo/components/use-status-polling";
 import { formatDay } from "../promo/format-date";
 import { ComparisonPanel } from "../quote/components/ComparisonPanel";
 import { EventForm } from "../quote/components/EventForm";
-import { LinesTable } from "../quote/components/LinesTable";
+import { LinesTable, type LinesHandle } from "../quote/components/LinesTable";
 import { useJsonSaver, useReportSync, type QuoteActionResult, type SyncState } from "../quote/components/use-saver";
 import { startQuoteGeneration } from "../quote/generate.server";
 import { listPriceItems } from "../quote/price-sheet.server";
@@ -74,6 +74,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     ...view,
     sheet: sheet.map((s) => ({
       id: s.id,
+      kind: s.kind,
       name: s.name,
       content: s.content,
       unit: s.unit,
@@ -394,6 +395,7 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
   const syncs = [linesSync, eventSync, senderSync];
   const fileSync: SyncState = syncs.includes("saving") ? "saving" : syncs.includes("failed") ? "failed" : "saved";
   const unsaved = fileSync !== "saved";
+  const linesRef = useRef<LinesHandle>(null);
 
   return (
     <>
@@ -417,12 +419,14 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
           initialEvent={event}
           readOnly={readOnly}
           onUnsavedChange={setEventSync}
+          onHeadcountChange={(from, to) => linesRef.current?.followHeadcount(from, to)}
         />
       </Section>
 
       <Section title="견적 표">
         <LinesTable
           key={scope}
+          ref={linesRef}
           quoteId={quote.id}
           version={version.version}
           initialLines={lines}

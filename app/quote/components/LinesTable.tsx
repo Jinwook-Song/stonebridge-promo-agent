@@ -1,17 +1,18 @@
-import { CircleAlertIcon, LightbulbIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { CircleAlertIcon, LightbulbIcon, PlusIcon, Trash2Icon, UsersIcon } from "lucide-react";
+import { useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { Button } from "../../components/ui/button";
 import { Input, inputClass } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
 import { Badge } from "../../components/ui/badge";
 import { cn } from "../../lib/utils";
-import { computeTotals, lineAmount } from "../lines";
-import type { QuoteLine } from "../types";
+import { computeTotals, followHeadcount, lineAmount } from "../lines";
+import type { PriceKind, QuoteLine } from "../types";
 import { useJsonSaver, useReportSync, type SyncState } from "./use-saver";
 
 /** The few price sheet columns the picker needs. */
 export type SheetChoice = {
   id: number;
+  kind: PriceKind;
   name: string;
   content: string;
   unit: string;
@@ -22,6 +23,12 @@ export type SheetChoice = {
 };
 
 type Row = { key: number; line: QuoteLine };
+
+/** What the event form calls when she changes the headcount (ReadyBody wires the two). */
+export type LinesHandle = { followHeadcount: (from: number | null, to: number | null) => void };
+
+/** The last headcount follow: the qty each moved row had, for 되돌리기. */
+type Followed = { from: number | null; to: number; prior: Map<number, number>; kept: number };
 
 const MAX_QTY = 100_000;
 const MAX_WON = 100_000_000;
@@ -65,6 +72,7 @@ export function LinesTable({
   sheet,
   readOnly,
   onUnsavedChange,
+  ref,
 }: {
   quoteId: number;
   version: number;
@@ -74,6 +82,7 @@ export function LinesTable({
   readOnly: boolean;
   /** While the lines on screen are not what the server holds ("saving", or "failed" until retried) a download would be stale. */
   onUnsavedChange?: (state: SyncState) => void;
+  ref?: Ref<LinesHandle>;
 }) {
   const nextKey = useRef(initialLines.length);
   const [rows, setRows] = useState<Row[]>(() => initialLines.map((line, key) => ({ key, line })));
@@ -83,8 +92,40 @@ export function LinesTable({
   const lines = rows.map((r) => r.line);
   const totals = computeTotals(lines, vatIncluded);
 
+  const [followed, setFollowed] = useState<Followed | null>(null);
+
   function commit(next: Row[]) {
     saver.save(next.map((r) => r.line));
+  }
+
+  useImperativeHandle(ref, () => ({
+    followHeadcount(from, to) {
+      if (readOnly || to === null || to <= 0 || to === from) return;
+      const kinds = new Map(sheet.map((s) => [s.id, s.kind]));
+      const result = followHeadcount(lines, kinds, from, to);
+      const moved = new Set(result.changed);
+      const kept = lines.filter(
+        (l, i) => !moved.has(i) && l.itemId !== null && kinds.get(l.itemId) === "per_person",
+      ).length;
+      const prior = new Map(result.changed.map((i) => [rows[i].key, rows[i].line.qty]));
+      setFollowed(moved.size === 0 && kept === 0 ? null : { from, to, prior, kept });
+      if (moved.size === 0) return;
+      const next = rows.map((r, i) => (moved.has(i) ? { ...r, line: result.lines[i] } : r));
+      setRows(next);
+      commit(next);
+    },
+  }));
+
+  /** Puts back the rows that moved, unless she has changed their qty since. */
+  function undoFollow() {
+    if (!followed) return;
+    const next = rows.map((r) => {
+      const qty = followed.prior.get(r.key);
+      return qty !== undefined && r.line.qty === followed.to ? { ...r, line: { ...r.line, qty } } : r;
+    });
+    setFollowed(null);
+    setRows(next);
+    commit(next);
   }
 
   /** `save` false while typing in a text box; the blur saves. */
@@ -110,6 +151,21 @@ export function LinesTable({
 
   return (
     <div className="flex flex-col gap-3">
+      {followed && (
+        <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+          <UsersIcon className="size-4 shrink-0" aria-hidden="true" />
+          <span className="flex-1 break-keep">
+            {followed.prior.size > 0 &&
+              `인원이 바뀌어 1인 항목 ${followed.prior.size}줄 수량을 맞췄어요 (${followed.from ?? "모름"} → ${followed.to}). `}
+            {followed.kept > 0 && `수량을 따로 적은 1인 줄 ${followed.kept}개는 그대로 뒀어요.`}
+          </span>
+          {followed.prior.size > 0 && (
+            <Button type="button" size="sm" variant="outline" className="h-11" onClick={undoFollow}>
+              되돌리기
+            </Button>
+          )}
+        </div>
+      )}
       {rows.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">줄이 없어요. 아래에서 추가해 주세요.</p>}
       {rows.length > 0 && (
         <div
@@ -219,6 +275,12 @@ function LineRow({
 }) {
   // The two number boxes keep their own text so they can be emptied and retyped.
   const [qtyText, setQtyText] = useState(String(line.qty));
+  // The qty can also change from outside (the headcount follow, its undo): show it.
+  const [shownQty, setShownQty] = useState(line.qty);
+  if (line.qty !== shownQty) {
+    setShownQty(line.qty);
+    if ((qtyText === "" ? 0 : Number(qtyText)) !== line.qty) setQtyText(String(line.qty));
+  }
   const [priceText, setPriceText] = useState(line.unitPrice === null ? "" : String(line.unitPrice));
   const amount = lineAmount(line);
   const small = "h-11 md:h-10 md:text-sm";
