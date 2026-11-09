@@ -2,11 +2,12 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import type { z } from "zod";
+import { PhotoPickOutput } from "./photo-pick.server";
 import { ChannelRewrite, DraftOutput } from "./prompt";
 
 const MODEL = "claude-opus-5-5";
-// Thinking counts toward max_tokens on Opus 5.5 (always on, effort high). Streaming, so a large
-// cap is safe; it is a ceiling, not a cost.
+// Thinking counts toward max_tokens on Opus 5.5 (always on; effort is set per call). Streaming,
+// so a large cap is safe; it is a ceiling, not a cost.
 const MAX_TOKENS = 64000;
 // On a policy decline the API re-runs the request on Anthropic's recommended model for that
 // refusal category, inside the same call. The SDK (0.100) does not type `fallbacks` yet; it
@@ -59,15 +60,23 @@ export type ModelRequest = { system: string; user: Anthropic.ContentBlockParam[]
 type ModelResult<T> = { output: T; inputTokens: number; outputTokens: number };
 export type DraftCall = (req: ModelRequest) => Promise<ModelResult<DraftOutput>>;
 export type RewriteCall = (req: ModelRequest) => Promise<ModelResult<ChannelRewrite>>;
+export type PickCall = (req: ModelRequest) => Promise<ModelResult<PhotoPickOutput>>;
+export type ClaudeCalls = { drafts: DraftCall; rewrite: RewriteCall; pick: PickCall };
+
+type Effort = "low" | "medium" | "high";
 
 /**
  * Real calls. API errors (network, 429, 5xx, ...) are left to propagate as the SDK's typed
  * errors so the Workflow step retries them; only unusable answers become GenerationError.
  */
-export function makeClaudeCalls(apiKey: string): { drafts: DraftCall; rewrite: RewriteCall } {
+export function makeClaudeCalls(apiKey: string): ClaudeCalls {
   const client = new Anthropic({ apiKey });
 
-  async function call<S extends z.ZodType>(schema: S, req: ModelRequest): Promise<ModelResult<z.infer<S>>> {
+  async function call<S extends z.ZodType>(
+    schema: S,
+    req: ModelRequest,
+    effort: Effort,
+  ): Promise<ModelResult<z.infer<S>>> {
     const params: BetaMessageStreamParams & { fallbacks: "default" } = {
       model: MODEL,
       max_tokens: MAX_TOKENS,
@@ -77,7 +86,7 @@ export function makeClaudeCalls(apiKey: string): { drafts: DraftCall; rewrite: R
       // Only the JSON schema, not the helper's `parse`: with `parse` the SDK parses every text
       // block inside finalMessage() and throws on a refusal / cut-off / fallback partial before
       // stop_reason can be checked. We parse ourselves below.
-      output_config: { effort: "high", format: { type: "json_schema", schema: zodOutputFormat(schema).schema } },
+      output_config: { effort, format: { type: "json_schema", schema: zodOutputFormat(schema).schema } },
       system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: req.user }],
     };
@@ -102,8 +111,11 @@ export function makeClaudeCalls(apiKey: string): { drafts: DraftCall; rewrite: R
   }
 
   return {
-    drafts: (req) => call(DraftOutput, req),
-    rewrite: (req) => call(ChannelRewrite, req),
+    drafts: (req) => call(DraftOutput, req, "high"),
+    rewrite: (req) => call(ChannelRewrite, req, "high"),
+    // A short answer the owner waits for on the form: low keeps the wait short (spec: measure,
+    // raise to medium if the picks are poor).
+    pick: (req) => call(PhotoPickOutput, req, "low"),
   };
 }
 
@@ -132,7 +144,7 @@ function parseOutput<S extends z.ZodType>(schema: S, content: Anthropic.Beta.Mes
  * Local-dev stand-in (FAKE_CLAUDE=1 in .dev.vars): canned drafts after a short wait, so the
  * screens can be tried without an API key or spending tokens.
  */
-export function makeFakeClaudeCalls(): { drafts: DraftCall; rewrite: RewriteCall } {
+export function makeFakeClaudeCalls(): ClaudeCalls {
   const wait = () => new Promise((resolve) => setTimeout(resolve, 2000));
   return {
     drafts: async () => {
@@ -156,6 +168,16 @@ export function makeFakeClaudeCalls(): { drafts: DraftCall; rewrite: RewriteCall
       await wait();
       return {
         output: { title: "[테스트] 다시 쓴 제목", body: "다시 써 봤어요! (테스트 초안)", hashtags: ["테스트"] },
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    },
+    // The first min(8, N) photos in the order sent.
+    pick: async (req) => {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const count = req.user.filter((b) => b.type === "image").length;
+      return {
+        output: { picks: Array.from({ length: Math.min(8, count) }, (_, i) => ({ n: i + 1, reason: "테스트 사진" })) },
         inputTokens: 0,
         outputTokens: 0,
       };

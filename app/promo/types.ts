@@ -18,6 +18,10 @@ export const MAX_PHOTOS = 8;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 export const MAX_MEMO_CHARS = 500;
 
+/** AI photo pick limits: browser-made thumbnails (640 px JPEG, ~40–80 KB) sent to /api/photo-pick. */
+export const MAX_PICK_CANDIDATES = 40;
+export const MAX_THUMB_BYTES = 300 * 1024;
+
 /** Result-screen edit limits, shared by the editor and saveDraftEdit. */
 export const MAX_TITLE_CHARS = 200;
 export const MAX_BODY_CHARS = 10_000;

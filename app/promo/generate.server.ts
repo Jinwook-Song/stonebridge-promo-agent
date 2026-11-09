@@ -374,7 +374,7 @@ function isUsableOrigin(origin: string): boolean {
   return url.protocol === "https:" && url.hostname !== "" && !url.hostname.split(".").includes("example");
 }
 
-function toBase64(bytes: Uint8Array): string {
+export function toBase64(bytes: Uint8Array): string {
   // Chunked: spreading a whole photo into fromCharCode overflows the call stack.
   let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
