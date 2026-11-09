@@ -671,6 +671,8 @@ describe("prompt", () => {
     expect(system).not.toContain("수정 요청에 단가가 있으면 비고에");
     expect(system).not.toContain("비고에 제안으로");
     expect(system).toContain("가장 먼저 뺄 만한 한두 줄에만 tip으로 적는다");
+    // The reply email goes to the customer too: tip content stays out of it.
+    expect(system).toContain("tip에 적은 내용(SVC 제안, 손님이 바란 가격, 예산 사정, 최소 수량 안내)은 메일에 쓰지 않는다.");
     // Neither field carries amounts.
     expect(system).toMatch(/note와 tip[^\n]*금액/);
   });
