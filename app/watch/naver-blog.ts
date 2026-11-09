@@ -107,6 +107,14 @@ const BODY_TOKEN =
 const INVISIBLE = /[\u200b-\u200f\u2060\u202a-\u202e\ufeff]/g;
 
 /**
+ * Whether the page is a SmartEditor post (its viewer or body container is there), as opposed to a
+ * block, captcha or error page. A post may still have no text: a video-only or empty post.
+ */
+export function hasPostBody(html: string): boolean {
+  return /class="[^"]*\bse-(?:main-container|viewer)\b/.test(html);
+}
+
+/**
  * Body text of a Naver SmartEditor post page. Empty when the page has no text paragraphs, which is
  * how a deleted post looks (Naver still answers 200).
  */

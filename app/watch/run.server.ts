@@ -12,7 +12,7 @@ import type { WorkflowStep } from "cloudflare:workers";
 import type { Db } from "../server/db";
 import { buildEventRequest, buildPricesRequest, type EventExtract, type PriceExtract } from "./extract";
 import { fetchText, htmlToText } from "./fetch.server";
-import { canonicalPostUrl, naverPost, parsePostHtml, parseRss, type RssItem } from "./naver-blog";
+import { canonicalPostUrl, hasPostBody, naverPost, parsePostHtml, parseRss, type RssItem } from "./naver-blog";
 import type { WatchSource } from "./sources.server";
 import type { WatchKind } from "./types";
 
@@ -189,6 +189,9 @@ const GONE_STATUSES = new Set([404, 410]);
 /** Thrown for a post that no longer exists; the post is skipped. */
 class PostGone extends Error {}
 
+/** A post that is there but has no text or photos (video only, or empty); a feed passes it over. */
+class PostWithoutText extends Error {}
+
 /**
  * Visible text of a post or page. A Naver blog link is a frameset, so its post is read from the
  * mobile PostView page.
@@ -200,12 +203,15 @@ async function pageText(deps: WatchDeps, url: string): Promise<string> {
   const html = await fetchOk(deps, postView);
   const text = parsePostHtml(html);
   if (text === "" && NAVER_GONE.test(html)) throw new PostGone(`글이 없어요 ${url}`);
+  // Same words as a page with no text, since a price page given as a post lands here too.
+  if (text === "" && hasPostBody(html)) throw new PostWithoutText("페이지에 글자가 없어요");
   return text;
 }
 
 /**
- * Text of a feed post. PostGone for a deleted post (404/410, or Naver's not-found page). An empty
- * page without that sign (a block or captcha page answering 200) is an error, so the key stays.
+ * Text of a feed post. PostGone for a deleted post (404/410, or Naver's not-found page),
+ * PostWithoutText for a post with nothing to read. An empty page with neither sign (a block or
+ * captcha page answering 200) is an error, so the key stays.
  */
 async function postText(deps: WatchDeps, url: string): Promise<string> {
   let text: string;
@@ -242,9 +248,15 @@ async function runRss(
     try {
       text = await postText(deps, item.url);
     } catch (e) {
-      if (!(e instanceof PostGone)) throw e;
-      console.warn("watch post gone, skipped", { sourceId: source.id, error: e.message });
-      gone += 1;
+      if (e instanceof PostWithoutText) {
+        // Read, with nothing in it: not a deletion, so it does not count toward "all gone".
+        console.log("watch post has no text, skipped", { sourceId: source.id, url: item.url });
+      } else if (e instanceof PostGone) {
+        console.warn("watch post gone, skipped", { sourceId: source.id, error: e.message });
+        gone += 1;
+      } else {
+        throw e;
+      }
     }
     if (text !== null) {
       progress.claudeCalls += 1;

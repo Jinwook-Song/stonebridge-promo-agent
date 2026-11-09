@@ -315,6 +315,26 @@ describe("runWatchSource (rss)", () => {
     expect(await source(id)).toMatchObject({ lastSeenKey: "101", lastStatus: "error" });
   });
 
+  it("moves past a post with a body but no text (video only) without calling Claude", async () => {
+    const id = await addSource("rss", { lastSeenKey: "101" });
+    const videoOnly = `<html><body><div class="se-main-container"><div class="se-component se-video"><div class="se-module-video"></div></div></div></body></html>`;
+    const { deps, eventCalls } = fakeDeps({ ...feedRoutes(), [postUrl("102")]: () => html(videoOnly) });
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 1, added: 0, status: "ok" });
+    expect(eventCalls).toHaveLength(1);
+    expect(await source(id)).toMatchObject({ lastSeenKey: "103", lastStatus: "ok" });
+  });
+
+  it("is ok when the only new post has no text (not taken for a block)", async () => {
+    const id = await addSource("rss", { lastSeenKey: "102" });
+    const empty = `<div class="se-viewer se-theme-default"><div class="se-main-container"></div></div>`;
+    const { deps, eventCalls } = fakeDeps({ ...feedRoutes(), [postUrl("103")]: () => html(empty) });
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 0, added: 0, status: "ok" });
+    expect(eventCalls).toHaveLength(0);
+    expect(await source(id)).toMatchObject({ lastSeenKey: "103", lastStatus: "ok" });
+  });
+
   it.each([404, 410])("skips a post that answers %i and moves the key past it", async (status) => {
     const id = await addSource("rss", { lastSeenKey: "101" });
     const routes = { ...feedRoutes(), [postUrl("102")]: () => new Response("gone", { status }) };
@@ -497,6 +517,16 @@ describe("runWatchSource (page)", () => {
     expect(fetched).toEqual([postUrl("300")]);
     expect(priceCalls[0]!.user.map((b) => (b.type === "text" ? b.text : "")).join("")).toContain("A 다과 1인 10,000원");
     expect((await priceRows())[0]?.sourceUrl).toBe("https://blog.naver.com/demo-rival/300");
+  });
+
+  it("still errors for a price page given as a Naver post with no text", async () => {
+    const id = await addSource("page", { url: "https://blog.naver.com/demo-rival/300" });
+    const empty = `<div class="se-viewer se-theme-default"><div class="se-main-container"></div></div>`;
+    const { deps, priceCalls } = fakeDeps({ [postUrl("300")]: () => html(empty) });
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 0, added: 0, status: "error" });
+    expect(priceCalls).toHaveLength(0);
+    expect(await source(id)).toMatchObject({ lastStatus: "error", lastError: "페이지에 글자가 없어요" });
   });
 
   it("is skipped within 7 days of the last good run", async () => {
