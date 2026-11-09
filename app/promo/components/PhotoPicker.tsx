@@ -15,6 +15,7 @@ const PICK_TIMEOUT_MS = 45_000;
 const READ_FAILED = "사진을 읽지 못했어요. 다른 사진으로 다시 시도해 주세요.";
 const PICK_FAILED = "사진 고르기에 실패했어요. 직접 골라 주세요.";
 const PICK_TIMEOUT = "시간이 너무 걸려요. 다시 시도하거나 직접 골라 주세요.";
+const PICK_GONE = "고른 사진이 지워져서 그대로 두었어요.";
 const EMPTY: Selection = { order: [], reasons: {} };
 
 type Photos = { list: Candidate[]; sel: Selection };
@@ -35,6 +36,9 @@ export function usePhotoPicker() {
   const alive = useRef(true);
   const preparingRef = useRef(false);
   const pickAbort = useRef<AbortController | null>(null);
+  // The latest photos, for code that resumes after an await and must not read a stale closure.
+  const photosRef = useRef(photos);
+  photosRef.current = photos;
 
   useEffect(() => {
     alive.current = true;
@@ -62,14 +66,14 @@ export function usePhotoPicker() {
     try {
       for (let i = 0; i < take.length; i++) {
         setPreparing({ current: i + 1, total: take.length });
-        let thumb: Blob;
+        let thumb: Blob | null = null;
         try {
           thumb = (await resizeToJpeg(take[i], THUMB_EDGE, THUMB_QUALITY)).blob;
         } catch {
           failed = true;
-          continue;
         }
         if (!alive.current) return;
+        if (!thumb) continue;
         const preview = URL.createObjectURL(thumb);
         previews.current.add(preview);
         const candidate: Candidate = { id: nextId.current++, file: take[i], thumb, preview };
@@ -79,6 +83,7 @@ export function usePhotoPicker() {
       preparingRef.current = false;
       if (alive.current) setPreparing(null);
     }
+    if (!alive.current) return;
     if (failed) messages.push(READ_FAILED);
     setNotice(messages.length ? messages.join(" ") : null);
   }
@@ -154,8 +159,11 @@ export function usePhotoPicker() {
       return;
     }
     const applied = picks;
+    // applyPicks hands back the same selection when no pick survives (all removed meanwhile).
+    const { sel: current, list: present } = photosRef.current;
+    const kept = applyPicks(current, applied, sentIds, new Set(present.map((c) => c.id))) === current;
     setPhotos((p) => ({ ...p, sel: applyPicks(p.sel, applied, sentIds, new Set(p.list.map((c) => c.id))) }));
-    setNotice(null);
+    setNotice(kept ? PICK_GONE : null);
   }
 
   const selected = photos.sel.order
@@ -212,7 +220,7 @@ export function PhotoPicker({
   privateCustomer: boolean;
 }) {
   const { list, sel, preparing, notice, picking, pickError } = picker;
-  const canAdd = !disabled && preparing === null;
+  const canAdd = !disabled && preparing === null && !picking;
 
   return (
     <section aria-labelledby="photos-title" className="flex flex-col gap-2">

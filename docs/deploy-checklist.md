@@ -47,3 +47,9 @@
   - 첫 다시 쓰기는 캐시를 못 읽는 게 정상이다. 초안 만들기와 다시 쓰기는 출력 JSON 스키마가 달라서 캐시 앞부분이 다르다 (2026-11-08 실측: 초안 6,467 토큰 기록 → 첫 다시 쓰기 5,424 토큰 새로 기록 → 두 번째 다시 쓰기 5,424 토큰 읽음). 첫 다시 쓰기마다 약 $0.02가 더 든다.
 - [ ] 두 호출의 토큰 수(`input_tokens`, `cache_*`, `output_tokens`)와 걸린 시간을 적어 둔다.
 - [ ] 시간이 단계 제한(15분, `STEP_TIMEOUT_MINUTES`)에 가깝거나 `max_tokens`로 잘리면 `app/promo/generate.server.ts`의 타임아웃 / `app/promo/claude.server.ts`의 `MAX_TOKENS`를 조정한다. 타임아웃을 바꾸면 `STALE_CLAIM_MS`는 자동으로 따라간다.
+
+## 매 배포마다
+
+- [ ] **새 D1 마이그레이션이 있으면 배포 전에 먼저 원격에 적용한다.** 순서는 `npx wrangler d1 migrations apply promo-agent --remote` → `npm run deploy`.
+  - 앱을 마이그레이션보다 먼저 배포하면 안 된다. drizzle이 스키마의 모든 칸을 SELECT해서, 새 칸이 아직 없으면 글 페이지가 전부 실패한다.
+  - 이번 배포에 필요한 것: `0003_draft_ready_alert.sql` (`posts.draft_notified_at` 칸 추가).

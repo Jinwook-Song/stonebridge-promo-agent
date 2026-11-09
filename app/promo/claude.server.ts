@@ -66,6 +66,13 @@ export type ClaudeCalls = { drafts: DraftCall; rewrite: RewriteCall; pick: PickC
 type Effort = "low" | "medium" | "high";
 
 /**
+ * The pick is a synchronous call the browser abandons after 45 s: no SDK retries (each retry is
+ * billed) and a 40 s cap so the call ends before the browser gives up. Drafts/rewrite keep the
+ * SDK defaults (they run in a Workflow step that has its own retry policy).
+ */
+const PICK_REQUEST_OPTIONS = { maxRetries: 0, timeout: 40_000 } as const;
+
+/**
  * Real calls. API errors (network, 429, 5xx, ...) are left to propagate as the SDK's typed
  * errors so the Workflow step retries them; only unusable answers become GenerationError.
  */
@@ -76,6 +83,7 @@ export function makeClaudeCalls(apiKey: string): ClaudeCalls {
     schema: S,
     req: ModelRequest,
     effort: Effort,
+    options?: { maxRetries?: number; timeout?: number },
   ): Promise<ModelResult<z.infer<S>>> {
     const params: BetaMessageStreamParams & { fallbacks: "default" } = {
       model: MODEL,
@@ -90,7 +98,7 @@ export function makeClaudeCalls(apiKey: string): ClaudeCalls {
       system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
       messages: [{ role: "user", content: req.user }],
     };
-    const message = await client.beta.messages.stream(params).finalMessage();
+    const message = await client.beta.messages.stream(params, options).finalMessage();
     // Numbers only (no text): shows in `wrangler tail` / Workers Logs, e.g. to check that a
     // rewrite reads the system prompt from cache (docs/deploy-checklist.md).
     console.info("claude usage", { stop_reason: message.stop_reason, ...message.usage });
@@ -115,7 +123,7 @@ export function makeClaudeCalls(apiKey: string): ClaudeCalls {
     rewrite: (req) => call(ChannelRewrite, req, "high"),
     // A short answer the owner waits for on the form: low keeps the wait short (spec: measure,
     // raise to medium if the picks are poor).
-    pick: (req) => call(PhotoPickOutput, req, "low"),
+    pick: (req) => call(PhotoPickOutput, req, "low", PICK_REQUEST_OPTIONS),
   };
 }
 
