@@ -7,10 +7,12 @@ import { listWatchSources } from "../app/watch/sources.server";
 export class WatchWorkflow extends WorkflowEntrypoint<Env, Record<string, never>> {
   async run(event: Readonly<WorkflowEvent<Record<string, never>>>, step: WorkflowStep): Promise<void> {
     const deps = makeWatchDeps(this.env, getDb(this.env.DB));
-    const ids = await step.do("sources", async () =>
-      (await listWatchSources(deps.db)).filter((s) => s.enabled).map((s) => s.id),
+    // Named apart from the old "sources" step (ids only), so an instance started before this
+    // shape existed does not replay a cached list of plain ids.
+    const sources = await step.do("source-list", async () =>
+      (await listWatchSources(deps.db)).filter((s) => s.enabled).map((s) => ({ id: s.id, kind: s.kind })),
     );
     // The instance's start time, the same on every replay.
-    await runWatch(step, deps, ids, event.timestamp);
+    await runWatch(step, deps, sources, event.timestamp);
   }
 }

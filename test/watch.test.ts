@@ -12,6 +12,7 @@ import {
   RSS_ITEMS_PER_RUN,
   RSS_TIME_LIMIT_MS,
   runWatch,
+  NO_BUDGET,
   runWatchSource,
   startWatchRun,
   WATCH_RUN_BUDGET,
@@ -404,12 +405,24 @@ describe("runWatchSource (rss)", () => {
     expect((await source(id)).lastSeenKey).toBe("103");
   });
 
-  it("does nothing with no budget left", async () => {
-    const id = await addSource("rss", { lastSeenKey: "101" });
+  it("does nothing with no budget left, but notes the skip on the watch list", async () => {
+    const id = await addSource("rss", { lastSeenKey: "101", lastStatus: "ok", lastRunAt: NOW.toISOString() });
     const { deps, fetched } = fakeDeps(feedRoutes());
-    expect(await runWatchSource(deps, id, 0, NOW)).toEqual({ claudeCalls: 0, added: 0, status: "skipped" });
+    expect(await runWatchSource(deps, id, 0, later(1))).toEqual({ claudeCalls: 0, added: 0, status: "skipped" });
     expect(fetched).toHaveLength(0);
-    expect((await source(id)).lastRunAt).toBeNull();
+    expect(await source(id)).toMatchObject({
+      lastRunAt: NOW.toISOString(),
+      lastStatus: "ok",
+      lastSeenKey: "101",
+      lastError: NO_BUDGET,
+    });
+  });
+
+  it("keeps a source's real error when it is skipped for budget", async () => {
+    const id = await addSource("rss", { lastStatus: "error", lastError: "가져오지 못했어요 (HTTP 503)" });
+    const { deps } = fakeDeps(feedRoutes());
+    await runWatchSource(deps, id, 0, NOW);
+    expect((await source(id)).lastError).toBe("가져오지 못했어요 (HTTP 503)");
   });
 
   it("reads a non-Naver post page as plain text", async () => {
@@ -744,14 +757,57 @@ describe("runWatch", () => {
       }),
     };
 
-    const result = await runWatch(step, failing, [a, b], NOW);
+    const result = await runWatch(step, failing, [{ id: a, kind: "rss" }, { id: b, kind: "page" }], NOW);
 
-    expect(names).toEqual([`source-${a}`, `source-${b}`]);
+    // Price pages run first.
+    expect(names).toEqual([`source-${b}`, `source-${a}`]);
     expect(aAttempts).toBe(2); // first try + one retry
     expect(eventCalls).toHaveLength(0);
     expect(priceCalls).toHaveLength(1);
     // a's failed step counts pessimistically as RSS_ITEMS_PER_RUN calls.
     expect(result).toEqual({ remaining: WATCH_RUN_BUDGET - RSS_ITEMS_PER_RUN - 1 });
+  });
+
+  it("runs price pages before feeds, so a feed backlog cannot use up their budget", async () => {
+    const feed = await addSource("rss");
+    const page = await addSource("page");
+    const { deps, eventCalls, priceCalls } = fakeDeps({ ...feedRoutes(), [PRICE_URL]: () => html(priceHtml("10,000원")) });
+    const { step, names } = fakeStep();
+
+    expect(await runWatch(step, deps, [{ id: feed, kind: "rss" }, { id: page, kind: "page" }], NOW, 3)).toEqual({ remaining: 0 });
+    expect(names).toEqual([`source-${page}`, `source-${feed}`]);
+    expect(priceCalls).toHaveLength(1);
+    expect(eventCalls).toHaveLength(2);
+  });
+
+  it("gives each feed a fair share of what is left", async () => {
+    const urls = [FEED_URL, "https://rss.blog.naver.com/demo-rival-2.xml", "https://rss.blog.naver.com/demo-rival-3.xml"];
+    const ids: number[] = [];
+    for (const url of urls) ids.push(await addSource("rss", { url }));
+    const feed = feedRoutes()[FEED_URL]!;
+    const { deps, eventCalls } = fakeDeps({ ...feedRoutes(), [urls[1]!]: feed, [urls[2]!]: feed });
+    const { step } = fakeStep();
+
+    // 4 calls over 3 feeds with 3 new posts each: 2, then 1, then 1 (not 3, 1, 0).
+    expect(await runWatch(step, deps, ids.map((id) => ({ id, kind: "rss" as const })), NOW, 4)).toEqual({ remaining: 0 });
+    expect(eventCalls).toHaveLength(4);
+    expect((await Promise.all(ids.map(source))).map((s) => s.lastSeenKey)).toEqual(["102", "101", "101"]);
+  });
+
+  it("counts a price page whose step failed for good as one call", async () => {
+    const page = await addSource("page");
+    const { deps } = fakeDeps({});
+    const { step } = fakeStep();
+    const failing: WatchDeps = {
+      ...deps,
+      db: new Proxy(db, {
+        get(target, prop, receiver) {
+          if (prop === "select") throw new Error("D1 unavailable");
+          return Reflect.get(target, prop, receiver) as unknown;
+        },
+      }),
+    };
+    expect(await runWatch(step, failing, [{ id: page, kind: "page" }], NOW)).toEqual({ remaining: WATCH_RUN_BUDGET - 1 });
   });
 
   it("passes what is left of the budget to the next source", async () => {
@@ -761,7 +817,7 @@ describe("runWatch", () => {
     const { deps, eventCalls } = fakeDeps(routes);
     const { step } = fakeStep();
 
-    expect(await runWatch(step, deps, [a, b], NOW, 3)).toEqual({ remaining: 0 });
+    expect(await runWatch(step, deps, [{ id: a, kind: "rss" }, { id: b, kind: "rss" }], NOW, 3)).toEqual({ remaining: 0 });
     expect(eventCalls).toHaveLength(3);
     expect((await source(b)).lastSeenKey).toBe("102");
   });

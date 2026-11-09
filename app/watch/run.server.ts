@@ -14,6 +14,7 @@ import { buildEventRequest, buildPricesRequest, type EventExtract, type PriceExt
 import { fetchText, htmlToText } from "./fetch.server";
 import { canonicalPostUrl, naverPost, parsePostHtml, parseRss, type RssItem } from "./naver-blog";
 import type { WatchSource } from "./sources.server";
+import type { WatchKind } from "./types";
 
 /** Claude calls allowed per daily run, over all sources (spec §6.4). */
 export const WATCH_RUN_BUDGET = 30;
@@ -64,9 +65,16 @@ class SourceError extends Error {
 const NO_PRICES = "페이지에서 가격을 찾지 못했어요";
 
 /**
+ * Stored as lastError (lastStatus and lastRunAt untouched) when a due source got no budget this
+ * run, so the watch list says why it did not move. The next read clears or replaces it.
+ */
+export const NO_BUDGET = "예산이 모자라 이번엔 건너뛰었어요";
+
+/**
  * Reads one source and stores what is new. Never throws for a broken source: the error goes to
  * the source's `lastStatus`/`lastError` so the other sources still run. `budget` = Claude calls
- * this source may still make. "skipped" (not due, disabled, no budget) leaves the run state alone.
+ * this source may still make. "skipped" (not due, disabled, no budget) leaves the run state alone,
+ * except that a budget skip notes NO_BUDGET unless the source shows an error of its own.
  */
 export async function runWatchSource(
   deps: WatchDeps,
@@ -76,7 +84,7 @@ export async function runWatchSource(
 ): Promise<WatchRunResult> {
   const [source] = await deps.db.select().from(watchSources).where(eq(watchSources.id, sourceId));
   const skipped: WatchRunResult = { claudeCalls: 0, added: 0, status: "skipped" };
-  if (!source || !source.enabled || budget <= 0) return skipped;
+  if (!source || !source.enabled) return skipped;
   // After an error the page is tried again the next day, not a week later.
   if (
     source.kind === "page" &&
@@ -84,6 +92,13 @@ export async function runWatchSource(
     source.lastRunAt !== null &&
     now.getTime() - Date.parse(source.lastRunAt) < PAGE_INTERVAL_MS
   ) {
+    return skipped;
+  }
+  if (budget <= 0) {
+    console.log(`watch source ${sourceId}: skipped, no budget left`);
+    if (source.lastStatus !== "error") {
+      await deps.db.update(watchSources).set({ lastError: NO_BUDGET }).where(eq(watchSources.id, source.id));
+    }
     return skipped;
   }
 
@@ -370,32 +385,44 @@ async function runPage(
 
 // ---- Daily run -----------------------------------------------------------------------------
 
+export type WatchRunSource = { id: number; kind: WatchKind };
+
 /**
- * The Workflow's loop: each source in its own step, sharing one Claude budget. A step that fails
- * for good (both attempts) is logged and the next source runs; since its calls are unknown, it
- * counts as the most one source may make.
+ * The Workflow's loop: each source in its own step, sharing one Claude budget. Price pages go
+ * first (one call each at most), then each feed gets a fair share of what is left,
+ * ceil(remaining / feeds still to run), so one feed's backlog cannot starve the others; what a feed
+ * leaves unused passes on. A step that fails for good (both attempts) is logged and the next source
+ * runs; since its calls are unknown, it counts as the most it could have made (a page 1, a feed
+ * its share up to RSS_ITEMS_PER_RUN).
  */
 export async function runWatch(
   step: Pick<WorkflowStep, "do">,
   deps: WatchDeps,
-  sourceIds: number[],
+  sources: WatchRunSource[],
   now: Date,
   budget: number = WATCH_RUN_BUDGET,
 ): Promise<{ remaining: number }> {
+  const ordered = [...sources.filter((s) => s.kind === "page"), ...sources.filter((s) => s.kind !== "page")];
+  let feedsLeft = sources.length - sources.filter((s) => s.kind === "page").length;
   let remaining = budget;
-  for (const id of sourceIds) {
-    const left = remaining;
+  for (const { id, kind } of ordered) {
+    let given = remaining;
+    if (kind !== "page") {
+      given = Math.ceil(remaining / feedsLeft);
+      feedsLeft -= 1;
+    }
     try {
       // runWatchSource records a broken source and returns; the retry covers an unexpected throw.
       const result = await step.do(
         `source-${id}`,
         { retries: { limit: 1, delay: "30 seconds" }, timeout: "5 minutes" },
-        () => runWatchSource(deps, id, left, now),
+        () => runWatchSource(deps, id, given, now),
       );
       remaining = Math.max(0, remaining - result.claudeCalls);
       console.log(`watch source ${id}: ${result.status}, ${result.claudeCalls} calls, ${result.added} added`);
     } catch (e) {
-      remaining -= Math.min(remaining, RSS_ITEMS_PER_RUN);
+      const most = kind === "page" ? 1 : Math.min(given, RSS_ITEMS_PER_RUN);
+      remaining -= Math.min(remaining, most);
       console.error("watch source step failed", { sourceId: id, error: e });
     }
   }

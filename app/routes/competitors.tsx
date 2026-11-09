@@ -385,7 +385,16 @@ function SourceFields({ source }: { source?: WatchSource }) {
 }
 
 function RunState({ source: s }: { source: WatchSource }) {
-  if (s.lastStatus === null) return <p className="text-sm text-muted-foreground">아직 돌린 적 없어요.</p>;
+  // Without an error status, lastError is a note (skipped for budget), not a failure.
+  const note = s.lastStatus !== "error" && s.lastError ? <p className="break-words text-muted-foreground">{s.lastError}</p> : null;
+  if (s.lastStatus === null) {
+    return (
+      <div className="flex flex-col gap-1 text-sm">
+        <p className="text-muted-foreground">아직 돌린 적 없어요.</p>
+        {note}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-1 text-sm">
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground">
@@ -393,6 +402,7 @@ function RunState({ source: s }: { source: WatchSource }) {
         {s.lastRunAt && <span>마지막 실행 {seenDate(s.lastRunAt)}</span>}
       </p>
       {s.lastStatus === "error" && s.lastError && <p className="break-words text-red-800">{s.lastError}</p>}
+      {note}
     </div>
   );
 }
