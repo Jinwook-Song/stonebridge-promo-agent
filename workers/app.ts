@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { createRequestHandler } from "react-router";
 import { runScheduled } from "../app/kakao/alerts.server";
 import { kakaoConfig } from "../app/kakao/link.server";
+import { canonicalRedirect } from "../app/server/canonical-host";
 import { getDb, withD1Session } from "../app/server/db";
 import { startWatchRun, WATCH_CRON } from "../app/watch/run.server";
 
@@ -22,6 +23,9 @@ function readBookmark(request: Request): string | null {
 
 export default {
   async fetch(request) {
+    const moved = canonicalRedirect(request.url, env.PUBLIC_ORIGIN);
+    if (moved) return Response.redirect(moved, 308);
+
     const bookmark = readBookmark(request);
     const session = env.DB.withSession(bookmark ?? "first-unconstrained");
     const response = await withD1Session(session, () => requestHandler(request));

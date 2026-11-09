@@ -15,9 +15,9 @@
 
 ## 3. 설정값
 
-- [ ] **`PUBLIC_ORIGIN`**: `wrangler.jsonc`의 `vars.PUBLIC_ORIGIN`을 실제 주소(예: `https://stonebridge-promo.<내 서브도메인>.workers.dev`)로 바꾼다. Claude가 이 주소로 서명된 사진 URL을 받아 간다.
+- [ ] **한국용 앞단(Pages)**: `npx wrangler pages project create stonebridge-promo --production-branch main` (한 번만). `edge/`의 Pages 프로젝트가 모든 요청을 서비스 바인딩으로 Worker에 넘긴다. `*.workers.dev`는 한국에서 LA 거점으로 들어가 화면마다 1~10초 걸리고, `*.pages.dev`는 서울 거점이라 0.06~0.24초다 (2026-11-09 측정). `npm run deploy`가 Worker 다음에 앞단도 배포한다.
+- [ ] **`PUBLIC_ORIGIN`**: `wrangler.jsonc`의 `vars.PUBLIC_ORIGIN`을 앞단 주소(`https://stonebridge-promo.pages.dev`)로 둔다. Claude가 이 주소로 서명된 사진 URL을 받아 가고, 카톡 알림 버튼도 이 주소로 간다. workers.dev 주소로 들어온 요청은 이 주소로 308 넘긴다. 바꿀 때는 카카오 콘솔에 새 주소를 먼저 등록한다 ([kakao-setup.md](kakao-setup.md)).
   - 자리표시자(`example` 들어간 주소)나 잘못된 https 주소면 초안 만들기가 바로 실패하고 "앱 주소 설정(PUBLIC_ORIGIN)이 안 되어 있어요. 관리자에게 알려 주세요."가 뜬다 (재시도 없음).
-  - workers.dev 주소는 첫 배포 뒤에 확정되므로, 모르면 한 번 배포하고 주소를 넣은 뒤 다시 배포한다.
 - [ ] 비밀값 4개 (`npx wrangler secret put <이름>`):
   - `ANTHROPIC_API_KEY`
   - `SESSION_SECRET` — 32자 이상 (`openssl rand -base64 48`)
