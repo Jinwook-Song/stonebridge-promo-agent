@@ -52,6 +52,8 @@ export type VersionView = {
   outputTokens: number | null;
   createdAt: string;
   generatedAt: string | null;
+  /** When the current run claimed the version; with `status`, tells isFreshClaim whether a run may still finish it. */
+  generationStartedAt: string | null;
 };
 
 export type QuoteView = {
@@ -126,6 +128,7 @@ function versionView(row: typeof quoteVersions.$inferSelect): VersionView {
     outputTokens: row.outputTokens,
     createdAt: row.createdAt,
     generatedAt: row.generatedAt,
+    generationStartedAt: row.generationStartedAt,
   };
 }
 
