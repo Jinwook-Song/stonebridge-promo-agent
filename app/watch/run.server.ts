@@ -117,14 +117,17 @@ function newItems(items: RssItem[], lastSeenKey: string | null): RssItem[] {
   return fresh.slice(0, RSS_ITEMS_PER_RUN).reverse();
 }
 
-/** Post text; "" when the page has none (a deleted Naver post still answers 200). */
-async function postText(deps: WatchDeps, item: RssItem): Promise<string> {
-  const naver = naverPost(item.url);
+/**
+ * Visible text of a post or page; "" when it has none (a deleted Naver post still answers 200).
+ * A Naver blog link is a frameset, so its post is read from the mobile PostView page.
+ */
+async function pageText(deps: WatchDeps, url: string): Promise<string> {
+  const naver = naverPost(url);
   if (naver) {
-    const url = `https://m.blog.naver.com/PostView.naver?blogId=${encodeURIComponent(naver.blogId)}&logNo=${naver.logNo}`;
-    return parsePostHtml(await fetchOk(deps, url));
+    const postView = `https://m.blog.naver.com/PostView.naver?blogId=${encodeURIComponent(naver.blogId)}&logNo=${naver.logNo}`;
+    return parsePostHtml(await fetchOk(deps, postView));
   }
-  return htmlToText(await fetchOk(deps, item.url));
+  return htmlToText(await fetchOk(deps, url));
 }
 
 async function runRss(
@@ -141,7 +144,7 @@ async function runRss(
   for (const item of newItems(items, source.lastSeenKey)) {
     if (progress.claudeCalls >= budget) break;
     // A failed fetch throws before lastSeenKey moves past this post, so the next run reads it again.
-    const text = await postText(deps, item);
+    const text = await pageText(deps, item.url);
     if (text !== "") {
       progress.claudeCalls += 1;
       const extract = await extractOrSkip(() => deps.watchEvent(buildEventRequest(item, text)));
@@ -221,7 +224,8 @@ async function runPage(
   now: Date,
   progress: Progress,
 ): Promise<Done> {
-  const text = htmlToText(await fetchOk(deps, source.url));
+  // A price list pinned as a Naver blog post works too.
+  const text = await pageText(deps, source.url);
   if (text === "") throw new Error("페이지에 글자가 없어요");
   // The visible text, not the HTML: scripts and tokens change on every load.
   const contentHash = await sha256Hex(text);

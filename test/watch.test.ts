@@ -363,6 +363,16 @@ describe("runWatchSource (page)", () => {
     expect(after[2]).toMatchObject({ packageName: "A 다과", perPerson: 11000, seenAt: later(16).toISOString() });
   });
 
+  it("reads a Naver blog post given as a price page from its PostView page", async () => {
+    const id = await addSource("page", { url: "https://blog.naver.com/demo-rival/300" });
+    const { deps, fetched, priceCalls } = fakeDeps({ [postUrl("300")]: () => html(postHtml("A 다과 1인 10,000원")) });
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 1, added: 2, status: "ok" });
+    expect(fetched).toEqual([postUrl("300")]);
+    expect(priceCalls[0]!.user.map((b) => (b.type === "text" ? b.text : "")).join("")).toContain("A 다과 1인 10,000원");
+    expect((await priceRows())[0]?.sourceUrl).toBe("https://blog.naver.com/demo-rival/300");
+  });
+
   it("is skipped within 7 days of the last good run", async () => {
     const id = await addSource("page");
     const first = fakeDeps({ [PRICE_URL]: () => html(priceHtml("10,000원")) });
