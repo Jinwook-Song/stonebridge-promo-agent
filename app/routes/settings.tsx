@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { env } from "cloudflare:workers";
 import { CircleAlertIcon, CircleCheckIcon } from "lucide-react";
-import { Form, useFetcher, useNavigation, useSearchParams } from "react-router";
+import { Form, Link, useFetcher, useNavigation, useSearchParams } from "react-router";
 import type { Route } from "./+types/settings";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -173,6 +173,10 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-lg font-semibold">설정</h1>
+
+      <Link to="/settings/quote" className="flex h-11 items-center text-sm font-medium underline">
+        견적 설정 →
+      </Link>
 
       <KakaoSection kakao={loaderData.kakao} />
 
