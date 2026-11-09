@@ -29,6 +29,13 @@
       "when": 1794188703432,
       "tag": "0003_draft_ready_alert",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794195040926,
+      "tag": "0004_quote_agent",
+      "breakpoints": true
     }
   ]
 }

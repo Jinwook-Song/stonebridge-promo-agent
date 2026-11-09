@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, integer, real, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import { check, index, integer, real, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 import {
   CHANNELS,
   DRAFT_SOURCES,
@@ -8,6 +8,8 @@ import {
   POST_STATUSES,
 } from "../app/promo/types";
 import { ALERT_KINDS, ALERT_STATUSES } from "../app/kakao/types";
+import { PRICE_KINDS, QUOTE_SOURCES, QUOTE_STATUSES, VERSION_STATUSES } from "../app/quote/types";
+import { WATCH_KINDS, WATCH_STATUSES } from "../app/watch/types";
 
 // 시각은 모두 UTC ISO 문자열.
 
@@ -156,4 +158,143 @@ export const alertLog = sqliteTable(
     check("alert_log_kind_check", inList(t.kind, ALERT_KINDS)),
     check("alert_log_status_check", inList(t.status, ALERT_STATUSES)),
   ],
+);
+
+/** Price sheet. `unitPrice` is the supply price (VAT excluded); null = the owner has not set it. */
+export const priceItems = sqliteTable(
+  "price_items",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    kind: text("kind", { enum: PRICE_KINDS }).notNull(),
+    name: text("name").notNull(),
+    content: text("content").notNull().default(""),
+    unit: text("unit").notNull(),
+    unitPrice: integer("unit_price"),
+    minimumQty: integer("minimum_qty"),
+    menu: text("menu").notNull().default(""),
+    note: text("note").notNull().default(""),
+    /** A seeded price the owner has not confirmed yet; highlighted in the editor. */
+    needsConfirm: integer("needs_confirm", { mode: "boolean" }).notNull().default(false),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    sort: integer("sort").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [check("price_items_kind_check", inList(t.kind, PRICE_KINDS))],
+);
+
+/** Event details (customer, date, headcount...) live per version in quote_versions.event_json. */
+export const quotes = sqliteTable(
+  "quotes",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    status: text("status", { enum: QUOTE_STATUSES }).notNull(),
+    source: text("source", { enum: QUOTE_SOURCES }).notNull(),
+    /** JSON Sender snapshot taken when the quote was created. */
+    senderJson: text("sender_json").notNull(),
+    vatIncluded: integer("vat_included", { mode: "boolean" }).notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [
+    check("quotes_status_check", inList(t.status, QUOTE_STATUSES)),
+    check("quotes_source_check", inList(t.source, QUOTE_SOURCES)),
+  ],
+);
+
+export const quoteVersions = sqliteTable(
+  "quote_versions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    quoteId: integer("quote_id")
+      .notNull()
+      .references(() => quotes.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    status: text("status", { enum: VERSION_STATUSES }).notNull(),
+    error: text("error"),
+    /** Instance id of the Workflow that owns this generation. */
+    workflowId: text("workflow_id"),
+    /** When the generation was claimed; a claim older than 40 min is stale (same as posts). */
+    generationStartedAt: text("generation_started_at"),
+    inputText: text("input_text").notNull(),
+    /** What the owner asked to change relative to the previous version; null for version 1. */
+    changeRequest: text("change_request"),
+    /** JSON QuoteEvent / QuoteLine[] / Comparison; null until generated. */
+    eventJson: text("event_json"),
+    linesJson: text("lines_json"),
+    comparisonJson: text("comparison_json"),
+    emailSubject: text("email_subject"),
+    emailBody: text("email_body"),
+    /** JSON array of strings describing what changed from the previous version. */
+    changesJson: text("changes_json"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    createdAt: text("created_at").notNull(),
+    generatedAt: text("generated_at"),
+  },
+  (t) => [
+    unique("quote_versions_quote_version_unique").on(t.quoteId, t.version),
+    check("quote_versions_status_check", inList(t.status, VERSION_STATUSES)),
+  ],
+);
+
+export const watchSources = sqliteTable(
+  "watch_sources",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    kind: text("kind", { enum: WATCH_KINDS }).notNull(),
+    url: text("url").notNull(),
+    memo: text("memo").notNull().default(""),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** Newest item key seen so far (RSS guid/link), so only newer items are read. */
+    lastSeenKey: text("last_seen_key"),
+    lastRunAt: text("last_run_at"),
+    lastStatus: text("last_status", { enum: WATCH_STATUSES }),
+    lastError: text("last_error"),
+    /** Hash of the last fetched page content (kind = page), to skip unchanged pages. */
+    contentHash: text("content_hash"),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    check("watch_sources_kind_check", inList(t.kind, WATCH_KINDS)),
+    check("watch_sources_status_check", sql`${t.lastStatus} IS NULL OR ${inList(t.lastStatus, WATCH_STATUSES)}`),
+  ],
+);
+
+export const competitorEvents = sqliteTable("competitor_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  sourceId: integer("source_id")
+    .notNull()
+    .references(() => watchSources.id, { onDelete: "cascade" }),
+  sourceUrl: text("source_url").notNull().unique(),
+  date: text("date"),
+  client: text("client"),
+  venue: text("venue"),
+  eventType: text("event_type"),
+  /** JSON array of strings. */
+  menuJson: text("menu_json"),
+  quantity: integer("quantity"),
+  headcount: integer("headcount"),
+  price: integer("price"),
+  seenAt: text("seen_at").notNull(),
+});
+
+export const competitorPrices = sqliteTable(
+  "competitor_prices",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    sourceId: integer("source_id")
+      .notNull()
+      .references(() => watchSources.id, { onDelete: "cascade" }),
+    sourceUrl: text("source_url").notNull(),
+    packageName: text("package_name").notNull(),
+    perPerson: integer("per_person"),
+    /** JSON array of strings. */
+    itemsJson: text("items_json"),
+    minimum: integer("minimum"),
+    /** JSON array of { label, amount } extra fees. */
+    feesJson: text("fees_json"),
+    seenAt: text("seen_at").notNull(),
+  },
+  (t) => [index("competitor_prices_source_package_idx").on(t.sourceId, t.packageName)],
 );
