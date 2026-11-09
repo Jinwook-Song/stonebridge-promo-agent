@@ -1,4 +1,4 @@
-import ExcelJS from "exceljs";
+import type ExcelJS from "exceljs";
 import { computeTotals, lineAmount } from "./lines";
 import type { QuoteEvent, QuoteLine, Sender } from "./types";
 
@@ -44,7 +44,9 @@ export async function buildQuoteXlsx(input: QuoteXlsxInput): Promise<Uint8Array<
   const { event, lines, sender, vatIncluded, intro, fixedLines } = input;
   const totals = computeTotals(lines, vatIncluded);
 
-  const wb = new ExcelJS.Workbook();
+  // Loaded on demand: exceljs is ~2 MiB and only these two functions need it.
+  const { default: Excel } = await import("exceljs");
+  const wb = new Excel.Workbook();
   const ws = wb.addWorksheet("견적서", {
     pageSetup: { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 },
   });
@@ -194,13 +196,15 @@ function colLetter(col: number): string {
 
 /** `스톤테이블_견적서_<고객>_<YYMMDD>_v<n>.xlsx`; the date is Korean time. */
 export function xlsxFileName(customerName: string, createdAt: string, version: number): string {
-  const customer =
-    customerName
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, "")
-      .trim()
-      .replace(/\s+/g, "_")
-      .slice(0, 40) || "고객";
+  const cleaned = customerName
+    // Lone surrogates would make encodeURIComponent throw; drop them before anything else.
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, "")
+    .trim()
+    .replace(/\s+/g, "_");
+  // By code point, so an emoji is never cut in half.
+  const customer = Array.from(cleaned).slice(0, 40).join("") || "고객";
   const yymmdd = kstDate(createdAt).slice(2).replace(/-/g, "");
   return `스톤테이블_견적서_${customer}_${yymmdd}_v${version}.xlsx`;
 }
@@ -224,7 +228,8 @@ function cellText(value: ExcelJS.CellValue): string {
  * their calculated value; a merged range is written once.
  */
 export async function xlsxToText(bytes: Uint8Array): Promise<string> {
-  const wb = new ExcelJS.Workbook();
+  const { default: Excel } = await import("exceljs");
+  const wb = new Excel.Workbook();
   await wb.xlsx.load(bytes as never);
   const ws = wb.worksheets[0];
   if (!ws) return "";

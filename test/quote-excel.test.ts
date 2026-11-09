@@ -169,6 +169,21 @@ describe("xlsxFileName", () => {
     expect(xlsxFileName('/:*?"<>|\n', "2026-11-09T03:00:00.000Z", 2)).toContain("_고객_");
   });
 
+  it("cuts at 40 code points without splitting an emoji", () => {
+    const name = xlsxFileName("가".repeat(39) + "😀" + "나", "2026-11-09T03:00:00.000Z", 1);
+    expect(name).toBe(`스톤테이블_견적서_${"가".repeat(39)}😀_261109_v1.xlsx`);
+    expect(() => encodeURIComponent(name)).not.toThrow();
+  });
+
+  it("drops lone surrogates so the name can be encoded", () => {
+    for (const bad of ["\uD800abc", "abc\uDC00", "a\uD83Db"]) {
+      const name = xlsxFileName(bad, "2026-11-09T03:00:00.000Z", 1);
+      expect(() => encodeURIComponent(name)).not.toThrow();
+      expect(name).not.toMatch(/[\uD800-\uDFFF]/);
+    }
+    expect(xlsxFileName("\uD800abc", "2026-11-09T03:00:00.000Z", 1)).toBe("스톤테이블_견적서_abc_261109_v1.xlsx");
+  });
+
   it("drops control characters", () => {
     expect(xlsxFileName("가\r\n나\t다", "2026-11-09T03:00:00.000Z", 1)).toBe("스톤테이블_견적서_가나다_261109_v1.xlsx");
   });
@@ -233,6 +248,19 @@ describe("quote-xlsx route", () => {
     const res = (await get(String(id), "1")) as Response;
     const disposition = res.headers.get("Content-Disposition")!;
     expect(disposition.split("filename*=UTF-8''")[1]).not.toMatch(/['()*]/);
+  });
+
+  it("still serves a customer name with an emoji at the cut or a lone surrogate", async () => {
+    const id = await readyQuote();
+    for (const customerName of ["가".repeat(39) + "😀" + "나", "\uD800abc"]) {
+      await db
+        .update(quoteVersions)
+        .set({ eventJson: JSON.stringify({ ...event, customerName }) })
+        .where(eq(quoteVersions.quoteId, id));
+      const res = (await get(String(id), "1")) as Response;
+      expect(res.status).toBe(200);
+      expect(res.headers.get("Content-Disposition")).toContain("filename*=UTF-8''");
+    }
   });
 
   it("404s for an unknown quote, a bad version, and a version that is not ready", async () => {
