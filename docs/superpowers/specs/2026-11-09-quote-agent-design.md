@@ -124,6 +124,10 @@ findings above.)
      source and shows `seen_at`. The AI writes 2–3 sentences of takeaway, citing row ids only.
   4. 회신 메일: subject + body with a copy button.
   5. Buttons: 엑셀 받기, 수정 요청 붙여넣기 (→ next version), 상태 바꾸기.
+  6. **Per-quote sender and VAT** (my call): 발신 block and a "VAT 10% 별도" switch are stored
+     on each quote, defaulting from settings. Jobs referred through 드호/the academy can go out
+     under another name, and VAT/사업자번호 can be turned off until 스톤테이블 is registered.
+     With VAT off, the total row is just 공급금액 and the Excel has no ×1.1 formula.
 - **경쟁 업체** page with tabs:
   - 소식 (event log, newest first, filter by competitor / client text);
   - 가격 (published packages, latest per package, with history);
@@ -152,6 +156,18 @@ findings above.)
   - The email is polite and short. Don't invent policies (same rule as promo drafts).
 - Code validates: unknown `itemId` → null (price blank); `citedIds` filtered to the ids actually
   sent.
+- **Stored line** (what `linesJson` holds, builder's call made explicit): `{ itemId|null, label,
+  content, qty, unitPrice|null, priceSource: 'sheet' | 'hand' | 'imported', svc: boolean, menu,
+  note }`. `unitPrice` is copied from the sheet when the version is created (later sheet edits
+  don't rewrite old quotes).
+- **Hand edits and revisions** (my call): she edits the current version in place, and those
+  edits are saved straight away. A version is never regenerated in place. "수정 요청 붙여넣기"
+  creates v(n+1). The model gets the previous lines with their prices and SVC flags. For each
+  line it outputs `prevIndex` (the line it keeps or changes) or null for a new line. Code then
+  copies `unitPrice`/`priceSource`/`svc` from the referenced line whenever that line had a hand
+  price or SVC, so negotiated prices and SVC choices survive revisions. The model may suggest
+  dropping SVC only as a note. The "what changed" list is computed by code from the line diff,
+  plus the model's one-line summary of the request.
 - Effort: start at `medium`; the builder measures time and cost on 3–4 test inquiries.
 
 ### 6.3 Excel
@@ -193,10 +209,13 @@ findings above.)
 
 ### 6.6 Data (D1, new tables)
 
-- `price_items`: id, kind (`per_person` | `per_event`), name, content, unit, unitPrice (nullable),
-  menu, note, enabled, sort.
-- `quotes`: id, customer (name/contact/email), event fields, status, source (`app` | `imported`),
-  createdAt.
+- `price_items`: id, kind (`per_person` | `per_event`), name, content, unit, unitPrice (nullable,
+  공급가 = VAT 별도, as in her quote), minimumQty (nullable), menu, note, needsConfirm, enabled,
+  sort. Headcount tiers and distance-based fees are out of v1 (my call). She adjusts per quote,
+  and the note field holds the rule in words. `needsConfirm` marks seeded prices she hasn't
+  confirmed yet; the editor shows them highlighted.
+- `quotes`: id, customer (name/contact/email), event fields, senderJson, vatIncluded, status,
+  source (`app` | `imported`), createdAt.
 - `quote_versions`: quoteId, version, inputText, changeRequest, eventJson, linesJson,
   comparisonJson, emailSubject, emailBody, workflow fields (same claim/stale pattern as posts),
   tokens, createdAt.
@@ -236,3 +255,8 @@ findings above.)
   드호, and is it a partner who passes jobs, a competitor, or both?
 - Which peers should be on the watch list (we'll propose 4–5)?
 - A past quote email she sent, so the reply draft matches her tone.
+- Are the seeded prices hers? The only quote went out under 드호's name. If 드호 added a
+  margin, 8,500원/인 is not her level. Seeded rows are marked `needsConfirm` until she checks
+  them.
+- Does she price by headcount tiers, minimum order or distance? v1 leaves these to per-quote
+  edits.
