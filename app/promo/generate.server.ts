@@ -50,7 +50,7 @@ export function isFinalAttempt(attempt: number, retryLimit: number): boolean {
   return attempt > retryLimit;
 }
 
-const RETRY_LATER = "잠시 후 다시 시도해 주세요.";
+export const RETRY_LATER = "잠시 후 다시 시도해 주세요.";
 const START_FAILED = "초안 만들기를 시작하지 못했어요. 잠시 후 다시 시도해 주세요.";
 
 // ---- Workflow step timing (workers/generate-workflow.ts uses these) ------
@@ -245,23 +245,28 @@ async function prepare(deps: GenDeps, view: PostView) {
  * turns it into a NonRetryableError.
  * Anything else: record a generic reason on the last attempt, then rethrow so the Workflow
  * step retries it (or ends errored).
+ * `mark` records the reason on whatever the run owns (a post here, a quote version in
+ * app/quote/generate.server.ts), conditional on the run still owning it.
  */
-async function handleFailure(
-  db: Db,
-  run: RunRef,
-  status: "failed" | "ready",
+export async function handleRunFailure(
   e: unknown,
   opts: RunOptions,
+  mark: (message: string) => Promise<void>,
+  context: Record<string, unknown>,
 ): Promise<void> {
   if (e instanceof GenerationError) {
-    await markFailed(db, run, status, e.message);
+    await mark(e.message);
     return;
   }
-  console.error("generation failed", { ...run, error: e });
+  console.error("generation failed", { ...context, error: e });
   const permanent = permanentApiFailure(e);
-  if (permanent) await markFailed(db, run, status, permanent.message);
-  else if (opts.final !== false) await markFailed(db, run, status, RETRY_LATER);
+  if (permanent) await mark(permanent.message);
+  else if (opts.final !== false) await mark(RETRY_LATER);
   throw e;
+}
+
+function handleFailure(db: Db, run: RunRef, status: "failed" | "ready", e: unknown, opts: RunOptions): Promise<void> {
+  return handleRunFailure(e, opts, (message) => markFailed(db, run, status, message), run);
 }
 
 async function markFailed(db: Db, run: RunRef, status: "failed" | "ready", message: string): Promise<void> {

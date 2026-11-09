@@ -111,3 +111,17 @@ export const SenderSchema = z.object({
   onsite: z.string(),
   bizNo: z.string(),
 });
+
+export const ComparisonRowSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["own", "price", "event"]),
+  label: z.string(),
+  perPerson: z.number().int().nullable(),
+  sourceUrl: z.string().nullable(),
+  seenAt: z.string().nullable(),
+});
+
+export const ComparisonSchema = z.object({
+  notes: z.string(),
+  rows: z.array(ComparisonRowSchema),
+});

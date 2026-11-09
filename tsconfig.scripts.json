@@ -5,6 +5,8 @@
     "app/promo/types.ts",
     "app/kakao/types.ts",
     "app/quote/types.ts",
+    "app/quote/lines.ts",
+    "app/quote/prompt.ts",
     "app/watch/types.ts",
     "app/promo/claude.server.ts",
     "app/promo/default-rules.ts",

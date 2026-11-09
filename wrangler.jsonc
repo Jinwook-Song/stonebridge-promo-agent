@@ -55,6 +55,11 @@
 			"name": "generate-post",
 			"binding": "GENERATE",
 			"class_name": "GeneratePostWorkflow"
+		},
+		{
+			"name": "quote-generate",
+			"binding": "QUOTE_GENERATE",
+			"class_name": "QuoteGenerateWorkflow"
 		}
 	]
 }

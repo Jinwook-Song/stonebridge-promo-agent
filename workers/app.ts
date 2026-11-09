@@ -48,5 +48,6 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-// Bound as GENERATE in wrangler.jsonc.
+// Bound as GENERATE / QUOTE_GENERATE in wrangler.jsonc.
 export { GeneratePostWorkflow } from "./generate-workflow";
+export { QuoteGenerateWorkflow } from "./quote-workflow";

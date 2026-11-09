@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import type { z } from "zod";
+import { ImportOutput, QuoteOutput } from "../quote/prompt";
 import { PhotoPickOutput } from "./photo-pick.server";
 import { ChannelRewrite, DraftOutput } from "./prompt";
 
@@ -57,11 +58,19 @@ export function permanentApiFailure(e: unknown): { message: string } | null {
 }
 
 export type ModelRequest = { system: string; user: Anthropic.ContentBlockParam[] };
-type ModelResult<T> = { output: T; inputTokens: number; outputTokens: number };
+export type ModelResult<T> = { output: T; inputTokens: number; outputTokens: number };
 export type DraftCall = (req: ModelRequest) => Promise<ModelResult<DraftOutput>>;
 export type RewriteCall = (req: ModelRequest) => Promise<ModelResult<ChannelRewrite>>;
 export type PickCall = (req: ModelRequest) => Promise<ModelResult<PhotoPickOutput>>;
-export type ClaudeCalls = { drafts: DraftCall; rewrite: RewriteCall; pick: PickCall };
+export type QuoteCall = (req: ModelRequest) => Promise<ModelResult<QuoteOutput>>;
+export type ImportCall = (req: ModelRequest) => Promise<ModelResult<ImportOutput>>;
+export type ClaudeCalls = {
+  drafts: DraftCall;
+  rewrite: RewriteCall;
+  pick: PickCall;
+  quote: QuoteCall;
+  importQuote: ImportCall;
+};
 
 type Effort = "low" | "medium" | "high";
 
@@ -124,6 +133,10 @@ export function makeClaudeCalls(apiKey: string): ClaudeCalls {
     // A short answer the owner waits for on the form: low keeps the wait short (spec: measure,
     // raise to medium if the picks are poor).
     pick: (req) => call(PhotoPickOutput, req, "low", PICK_REQUEST_OPTIONS),
+    // Quotes run in a Workflow step like drafts. Medium to start; measure (spec §6.2).
+    quote: (req) => call(QuoteOutput, req, "medium"),
+    // Copying a finished quote needs no judgement.
+    importQuote: (req) => call(ImportOutput, req, "low"),
   };
 }
 
@@ -190,5 +203,92 @@ export function makeFakeClaudeCalls(): ClaudeCalls {
         outputTokens: 0,
       };
     },
+    // v1: one line for the first price sheet item. A revision keeps every previous line, so a
+    // hand-set price can be seen surviving the new version.
+    quote: async (req) => {
+      await wait();
+      const sheet = jsonBlock(req.user, "## 가격 기준표");
+      const prev = jsonBlock(req.user, "## 이전 버전 견적 줄");
+      const first = sheet[0] as { id?: unknown; name?: unknown } | undefined;
+      const lines =
+        prev.length > 0
+          ? prev.map((raw, index) => {
+              const l = raw as { itemId: number | null; label: string; content: string; qty: number; menu: string; note: string };
+              return { itemId: l.itemId, label: l.label, content: l.content, qty: l.qty, menu: l.menu, note: l.note, prevIndex: index };
+            })
+          : [
+              {
+                itemId: typeof first?.id === "number" ? first.id : null,
+                label: typeof first?.name === "string" ? first.name : "테스트 항목",
+                content: "(테스트 견적)",
+                qty: 10,
+                menu: "",
+                note: "",
+                prevIndex: null,
+              },
+            ];
+      return {
+        output: {
+          event: {
+            customerName: "테스트 고객",
+            contactName: "",
+            contact: "",
+            email: "",
+            eventDate: "",
+            headcount: 10,
+            venue: "",
+            eventType: "테스트 행사",
+            budget: "",
+            requests: "",
+            missing: ["행사 날짜를 알려 주실 수 있나요?"],
+          },
+          lines,
+          comparison: { notes: "", citedIds: [] },
+          email: { subject: "[테스트] 견적 보내드려요", body: "안녕하세요. 견적서 보내드려요. (테스트 메일)" },
+          requestSummary: prev.length > 0 ? "테스트 수정 요청" : "",
+        },
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    },
+    importQuote: async () => {
+      await wait();
+      return {
+        output: {
+          event: {
+            customerName: "테스트 고객",
+            contactName: "",
+            contact: "",
+            email: "",
+            eventDate: "",
+            headcount: 10,
+            venue: "",
+            eventType: "테스트 행사",
+            budget: "",
+            requests: "",
+            missing: [],
+          },
+          lines: [{ label: "테스트 항목", content: "(가져온 견적)", qty: 10, unitPrice: 10000, svc: false, menu: "", note: "" }],
+        },
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    },
   };
+}
+
+/** Rows of a JSON-lines block of the quote prompt (app/quote/prompt.ts), for the fake only. */
+function jsonBlock(user: Anthropic.ContentBlockParam[], heading: string): unknown[] {
+  const block = user.find((b): b is Anthropic.TextBlockParam => b.type === "text" && b.text.startsWith(heading));
+  if (!block) return [];
+  return block.text
+    .split("\n")
+    .slice(1)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as unknown];
+      } catch {
+        return [];
+      }
+    });
 }
