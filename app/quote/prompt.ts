@@ -149,9 +149,15 @@ const FENCE_TAG_PATTERN = new RegExp(`<\\s*/?\\s*(?:${FENCE_TAGS.join("|")})\\s*
 /**
  * Pasted text goes inside its own tags, which the system prompt names as data. Any of those tags
  * inside the text are removed, so the text cannot close its fence or pose as the owner's request.
+ * Removed until nothing changes: one pass would turn "<문<문의글>의글>" back into "<문의글>".
  */
 function fenced(tag: (typeof FENCE_TAGS)[number], text: string): string {
-  return `<${tag}>\n${text.replace(FENCE_TAG_PATTERN, "")}\n</${tag}>`;
+  let body = text;
+  for (let before = ""; before !== body; ) {
+    before = body;
+    body = body.replace(FENCE_TAG_PATTERN, "");
+  }
+  return `<${tag}>\n${body}\n</${tag}>`;
 }
 
 /** Data goes as one compact JSON object per line, so the model reads ids exactly as sent. */
