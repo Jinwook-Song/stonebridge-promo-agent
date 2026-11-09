@@ -155,7 +155,9 @@ describe("requireOwner / isOwner", () => {
     ]) {
       await redirected(Promise.resolve(middleware[0]({ request: req, params: {}, context: {} } as never, next)));
     }
-  });
+    // The cold dynamic import above already takes ~4.5s while the pool runs every file at once, so the
+    // default 5s limit flakes; give it room.
+  }, 20_000);
 });
 
 describe("session secret validation", () => {
