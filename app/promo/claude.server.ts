@@ -38,20 +38,24 @@ export class GenerationError extends Error {
 
 /**
  * API errors that will fail the same way on every retry (bad key, bad request, too large), with
- * the Korean message to show. null = transient (network, 408, 409, 429, 5xx) or not an API error.
+ * the Korean message to show. `kind`: "setup" = our configuration, "request" = what was sent.
+ * null = transient (network, 408, 409, 429, 5xx) or not an API error.
  */
-export function permanentApiFailure(e: unknown): { message: string } | null {
+export function permanentApiFailure(e: unknown): { message: string; kind: "setup" | "request" } | null {
   if (!(e instanceof Anthropic.APIError)) return null;
   switch (e.status) {
     case 401:
     case 403:
     // Wrong model id or endpoint: a setup problem, like a bad key.
     case 404:
-      return { message: "AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요." };
+      return { message: "AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요.", kind: "setup" };
     case 400:
     case 413:
     case 422:
-      return { message: "AI가 요청을 처리하지 못했어요. 사진 수를 줄이거나 메모를 바꿔 다시 시도해 주세요." };
+      return {
+        message: "AI가 요청을 처리하지 못했어요. 사진 수를 줄이거나 메모를 바꿔 다시 시도해 주세요.",
+        kind: "request",
+      };
     default:
       return null;
   }

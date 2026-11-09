@@ -20,11 +20,25 @@ function words(text: string): string[] {
     .filter((w) => w.length >= 2);
 }
 
-/** How many of the target's words appear in the candidate's text. */
-function keywordScore(targetWords: string[], text: string): number {
-  if (targetWords.length === 0) return 0;
-  const lower = text.toLowerCase();
-  return targetWords.filter((w) => lower.includes(w)).length;
+/** Scores a candidate's type text: higher = closer to the quote being made. */
+type Scorer = (candidateText: string) => number;
+
+/**
+ * With an event type: how many of its words appear in the candidate's text. With only the pasted
+ * inquiry (v1, before the model has named the event type): how many of the candidate's words
+ * appear in the inquiry.
+ */
+function makeScorer(eventType: string, text: string | undefined): Scorer {
+  const targetWords = words(eventType);
+  if (targetWords.length > 0) {
+    return (candidate) => {
+      const lower = candidate.toLowerCase();
+      return targetWords.filter((w) => lower.includes(w)).length;
+    };
+  }
+  const inquiry = (text ?? "").toLowerCase();
+  if (inquiry === "") return () => 0;
+  return (candidate) => [...new Set(words(candidate))].filter((w) => inquiry.includes(w)).length;
 }
 
 /** 0 = same headcount; larger = further apart (ratio). Unknown on either side sorts last. */
@@ -47,7 +61,7 @@ const label = (parts: (string | null | undefined)[]) =>
   parts.filter((p): p is string => typeof p === "string" && p.trim() !== "").join(" · ");
 
 /** The owner's other quotes, each at its latest ready version. */
-async function ownRows(db: Db, target: Target, targetWords: string[], excludeQuoteId: number | null) {
+async function ownRows(db: Db, target: Target, score: Scorer, excludeQuoteId: number | null) {
   const latestReady = sql`${quoteVersions.version} = (SELECT max(v2.version) FROM ${quoteVersions} v2
     WHERE v2.quote_id = ${quoteVersions.quoteId} AND v2.status = 'ready')`;
   const rows = await db
@@ -94,7 +108,7 @@ async function ownRows(db: Db, target: Target, targetWords: string[], excludeQuo
           sourceUrl: null,
           seenAt: r.createdAt,
         },
-        score: keywordScore(targetWords, event?.eventType ?? ""),
+        score: score(event?.eventType ?? ""),
         distance: headcountDistance(target.headcount, headcount),
         at: r.createdAt,
       };
@@ -103,7 +117,7 @@ async function ownRows(db: Db, target: Target, targetWords: string[], excludeQuo
 }
 
 /** The newest row of each (source, package). */
-async function priceRows(db: Db, targetWords: string[]) {
+async function priceRows(db: Db, score: Scorer) {
   const newest = sql`${competitorPrices.id} = (SELECT p2.id FROM ${competitorPrices} p2
     WHERE p2.source_id = ${competitorPrices.sourceId} AND p2.package_name = ${competitorPrices.packageName}
     ORDER BY p2.seen_at DESC, p2.id DESC LIMIT 1)`;
@@ -134,7 +148,7 @@ async function priceRows(db: Db, targetWords: string[]) {
           sourceUrl: r.sourceUrl,
           seenAt: r.seenAt,
         },
-        score: keywordScore(targetWords, `${r.packageName} ${r.itemsJson ?? ""}`),
+        score: score(`${r.packageName} ${r.itemsJson ?? ""}`),
         distance: 0,
         at: r.seenAt,
       }),
@@ -142,7 +156,7 @@ async function priceRows(db: Db, targetWords: string[]) {
   );
 }
 
-async function eventRows(db: Db, target: Target, targetWords: string[]) {
+async function eventRows(db: Db, target: Target, score: Scorer) {
   const rows = await db
     .select({
       id: competitorEvents.id,
@@ -173,7 +187,7 @@ async function eventRows(db: Db, target: Target, targetWords: string[]) {
           sourceUrl: r.sourceUrl,
           seenAt: r.seenAt,
         },
-        score: keywordScore(targetWords, r.eventType ?? ""),
+        score: score(r.eventType ?? ""),
         distance: headcountDistance(target.headcount, r.headcount),
         at: r.date ?? r.seenAt,
       };
@@ -184,19 +198,21 @@ async function eventRows(db: Db, target: Target, targetWords: string[]) {
 /**
  * Up to 30 rows the model may cite: the owner's quotes (with a ready version, except
  * `excludeQuoteId`), then the latest price of each competitor package, then competitor events,
- * at most 10 each. Within each group, rows whose type shares words with `event.eventType` come
- * first. Empty tables give fewer rows (or none); this never blocks a quote.
+ * at most 10 each. Within each group, rows whose type shares words with `event.eventType` (or,
+ * when that is empty, with `opts.text`, the pasted inquiry) come first. Empty tables give fewer
+ * rows (or none); this never blocks a quote.
  */
 export async function selectCandidates(
   db: Db,
   event: Target,
   excludeQuoteId: number | null,
+  opts: { text?: string } = {},
 ): Promise<ComparisonRow[]> {
-  const targetWords = words(event.eventType);
+  const score = makeScorer(event.eventType, opts.text);
   const [own, prices, events] = await Promise.all([
-    ownRows(db, event, targetWords, excludeQuoteId),
-    priceRows(db, targetWords),
-    eventRows(db, event, targetWords),
+    ownRows(db, event, score, excludeQuoteId),
+    priceRows(db, score),
+    eventRows(db, event, score),
   ]);
   return [...own, ...prices, ...events];
 }

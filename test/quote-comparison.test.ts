@@ -152,6 +152,16 @@ describe("selectCandidates", () => {
     expect(evs[0]).toMatchObject({ perPerson: 10000, sourceUrl: "https://example.com/post/0" });
   });
 
+  it("with only the pasted text, ranks candidates whose type words appear in it", async () => {
+    const party = await ownQuote(1, [{ status: "ready", eventType: "돌잔치 답례" }]);
+    for (let d = 2; d <= 13; d++) await ownQuote(d, [{ status: "ready", eventType: "기업 워크숍" }]);
+    const rows = await selectCandidates(db, { eventType: "", headcount: null }, null, {
+      text: "다음 달 돌잔치 다과 30명 부탁드려요",
+    });
+    expect(rows).toHaveLength(10);
+    expect(rows[0].id).toBe(`q${party}`);
+  });
+
   it("without an event type, newest come first", async () => {
     const older = await ownQuote(1, [{ status: "ready" }]);
     const newer = await ownQuote(2, [{ status: "ready" }]);

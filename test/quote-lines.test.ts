@@ -181,6 +181,20 @@ describe("buildLines carry-over from a previous version", () => {
     expect(out[1]).toMatchObject({ unitPrice: null, priceSource: "hand" });
   });
 
+  it("a previous line without an itemId keeps its price even when the model now picks a sheet item", () => {
+    const p = [
+      line({ itemId: null, label: "도시락", unitPrice: 12000, priceSource: "imported" }),
+      line({ itemId: null, label: "꽃 장식", unitPrice: 7000, priceSource: "hand", svc: true }),
+    ];
+    const out = buildLines(
+      [model({ itemId: 1, label: "도시락", prevIndex: 0 }), model({ itemId: 2, label: "꽃 장식", prevIndex: 1 })],
+      sheet,
+      p,
+    );
+    expect(out[0]).toMatchObject({ itemId: null, unitPrice: 12000, priceSource: "imported", svc: false });
+    expect(out[1]).toMatchObject({ itemId: null, unitPrice: 7000, priceSource: "hand", svc: true });
+  });
+
   it("only lets the first line claim a previous line", () => {
     const out = buildLines([model({ qty: 350, prevIndex: 0 }), model({ qty: 20, prevIndex: 0 })], sheet, prev);
     expect(out[0]).toMatchObject({ unitPrice: 9000, priceSource: "hand" });

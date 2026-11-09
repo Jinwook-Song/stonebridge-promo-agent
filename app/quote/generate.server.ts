@@ -1,12 +1,19 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { quotes, quoteVersions } from "../../database/schema";
 import {
+  GenerationError,
   makeClaudeCalls,
   makeFakeClaudeCalls,
   type ImportCall,
   type QuoteCall,
 } from "../promo/claude.server";
-import { handleRunFailure, RETRY_LATER, STALE_CLAIM_MS, type RunOptions } from "../promo/generate.server";
+import {
+  handleRunFailure,
+  RETRY_LATER,
+  STALE_CLAIM_MS,
+  type FailureCopy,
+  type RunOptions,
+} from "../promo/generate.server";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
 import { selectCandidates } from "./comparison.server";
@@ -14,7 +21,7 @@ import { buildLines, diffLines } from "./lines";
 import { listPriceItems } from "./price-sheet.server";
 import { buildImportSystem, buildImportUser, buildQuoteSystem, buildQuoteUser, type ImportOutput } from "./prompt";
 import { getQuote } from "./quotes.server";
-import type { Comparison, QuoteEvent, QuoteLine } from "./types";
+import type { Comparison, ComparisonRow, QuoteEvent, QuoteLine } from "./types";
 
 /** Workflow instance params (workers/quote-workflow.ts). */
 export type QuoteGenParams = { quoteId: number; version: number };
@@ -34,6 +41,13 @@ export type QuoteGenDeps = {
 export type QuoteRunRef = { quoteId: number; version: number; workflowId: string };
 
 const START_FAILED = "견적 만들기를 시작하지 못했어요. 잠시 후 다시 시도해 주세요.";
+
+/** Quote wording for failures whose promo wording talks about photos and memos. */
+const QUOTE_FAILURE_COPY: FailureCopy = {
+  refusal: "AI가 이 요청을 거절했어요. 문의 글이나 수정 요청을 바꿔 다시 시도해 주세요.",
+  max_tokens: "견적이 너무 길어져서 끝까지 만들지 못했어요. 다시 시도해 주세요.",
+  bad_request: "AI가 요청을 처리하지 못했어요. 문의 글이나 수정 요청을 바꿔 다시 만들어 주세요.",
+};
 
 function owned(run: QuoteRunRef) {
   return and(
@@ -106,6 +120,14 @@ async function importVersion(deps: QuoteGenDeps, inputText: string): Promise<Gen
   };
 }
 
+/**
+ * Only rows that were actually sent, as they were sent (later watch runs do not change it). Notes
+ * without any surviving row are dropped: they could state numbers with no source behind them.
+ */
+function citedComparison(notes: string, rows: ComparisonRow[]): Comparison {
+  return rows.length === 0 ? { notes: "", rows: [] } : { notes: notes.trim(), rows };
+}
+
 /** Prices come from the sheet (or carry over from the previous version), never from the model. */
 async function quoteVersion(
   deps: QuoteGenDeps,
@@ -114,12 +136,17 @@ async function quoteVersion(
 ): Promise<Generated> {
   const { db } = deps;
   // A revision builds on the version before it (requestRevision only makes v(n+1) from a ready vn).
-  const prevView = run.version > 1 ? (await getQuote(db, run.quoteId, run.version - 1)).version : null;
-  const prev = prevView?.event && prevView.lines ? { event: prevView.event, lines: prevView.lines } : null;
+  // If that cannot be read, fail: running it as a first version would drop the agreed prices.
+  let prev: { event: QuoteEvent; lines: QuoteLine[] } | null = null;
+  if (run.version > 1) {
+    const before = (await getQuote(db, run.quoteId, run.version - 1)).version;
+    if (!before.event || !before.lines) throw new GenerationError("invalid_output");
+    prev = { event: before.event, lines: before.lines };
+  }
   const [sheet, candidates] = await Promise.all([
     listPriceItems(db, { enabledOnly: true }),
-    // v1: the event type is only known after this call, so the newest candidates are sent.
-    selectCandidates(db, prev?.event ?? { eventType: "", headcount: null }, run.quoteId),
+    // v1: the event type is only known after this call, so candidates are ranked by the inquiry.
+    selectCandidates(db, prev?.event ?? { eventType: "", headcount: null }, run.quoteId, { text: row.inputText }),
   ]);
 
   const { output, inputTokens, outputTokens } = await deps.quote({
@@ -138,8 +165,7 @@ async function quoteVersion(
   return {
     event: cleanEvent(output.event),
     lines,
-    // Only rows that were actually sent, as they were sent (later watch runs do not change it).
-    comparison: { notes: output.comparison.notes.trim(), rows: candidates.filter((c) => cited.has(c.id)) },
+    comparison: citedComparison(output.comparison.notes, candidates.filter((c) => cited.has(c.id))),
     emailSubject: output.email.subject,
     emailBody: output.email.body,
     changes,
@@ -194,7 +220,7 @@ export async function runQuoteGeneration(deps: QuoteGenDeps, run: QuoteRunRef, o
         .where(owned(run)),
     ]);
   } catch (e) {
-    await handleRunFailure(e, opts, (message) => markFailed(db, run, message), run);
+    await handleRunFailure(e, opts, (message) => markFailed(db, run, message), run, QUOTE_FAILURE_COPY);
   }
 }
 

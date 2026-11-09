@@ -6,6 +6,7 @@ import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
 import {
   GenerationError,
+  type GenerationFailure,
   makeClaudeCalls,
   makeFakeClaudeCalls,
   permanentApiFailure,
@@ -239,6 +240,9 @@ async function prepare(deps: GenDeps, view: PostView) {
   return { system, user };
 }
 
+/** Wording per model failure reason, and for a request the API rejected (400/413/422). */
+export type FailureCopy = Partial<Record<GenerationFailure | "bad_request", string>>;
+
 /**
  * GenerationError: final — record the reason and return, so the Workflow does not retry.
  * Permanent API error (bad key, bad request): record its reason now and rethrow; the Workflow
@@ -246,21 +250,23 @@ async function prepare(deps: GenDeps, view: PostView) {
  * Anything else: record a generic reason on the last attempt, then rethrow so the Workflow
  * step retries it (or ends errored).
  * `mark` records the reason on whatever the run owns (a post here, a quote version in
- * app/quote/generate.server.ts), conditional on the run still owning it.
+ * app/quote/generate.server.ts), conditional on the run still owning it. `copy` replaces the
+ * owner-facing wording of a model failure or a rejected request (default: the promo wording).
  */
 export async function handleRunFailure(
   e: unknown,
   opts: RunOptions,
   mark: (message: string) => Promise<void>,
   context: Record<string, unknown>,
+  copy: FailureCopy = {},
 ): Promise<void> {
   if (e instanceof GenerationError) {
-    await mark(e.message);
+    await mark(copy[e.reason] ?? e.message);
     return;
   }
   console.error("generation failed", { ...context, error: e });
   const permanent = permanentApiFailure(e);
-  if (permanent) await mark(permanent.message);
+  if (permanent) await mark((permanent.kind === "request" ? copy.bad_request : undefined) ?? permanent.message);
   else if (opts.final !== false) await mark(RETRY_LATER);
   throw e;
 }

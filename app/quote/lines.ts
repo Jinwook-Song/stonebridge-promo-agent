@@ -48,8 +48,8 @@ function cleanQty(qty: number): number {
 
 /**
  * Turns the model's proposed lines into priced quote lines.
- * 1. A valid reference to a not-yet-claimed previous line with the same itemId keeps that line's
- *    price, price source and SVC flag (hand-set values survive revisions).
+ * 1. A valid reference to a not-yet-claimed previous line with the same itemId, or with no itemId,
+ *    keeps that line's itemId, price, price source and SVC flag (hand-set values survive revisions).
  * 2. Otherwise an enabled sheet item with a price gets the sheet price.
  * 3. Otherwise the line is a hand line with no price, for the owner to fill in.
  */
@@ -73,7 +73,9 @@ export function buildLines(
     const index = m.prevIndex;
     if (prev && index !== null && Number.isInteger(index) && index >= 0 && index < prev.length) {
       const before = prev[index];
-      if (!claimed.has(index) && before.itemId === m.itemId) {
+      // A previous line without an itemId (imported, or typed in by hand) carries its price even
+      // when the model now matches it to a sheet item: the agreed price wins over the sheet.
+      if (!claimed.has(index) && (before.itemId === null || before.itemId === m.itemId)) {
         claimed.add(index);
         return {
           ...base,

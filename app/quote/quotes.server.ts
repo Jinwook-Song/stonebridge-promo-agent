@@ -208,7 +208,8 @@ export function isUniqueViolation(e: unknown): boolean {
 /**
  * Version n+1 "generating", from the latest version n when it is ready. BUSY while the latest is
  * still being made (two quick taps make one new version: the loser hits the unique
- * (quote_id, version) index). A failed or dead latest version is retried, not revised.
+ * (quote_id, version) index). A failed revision (n > 1) is reused with the new request and keeps
+ * its number. A failed v1 or a dead (stale) generating version is retried, not revised.
  */
 export async function requestRevision(
   db: Db,
@@ -220,12 +221,28 @@ export async function requestRevision(
   const latest = await latestVersion(db, quoteId);
   if (!latest) throw new DomainError("NOT_FOUND", "견적을 찾을 수 없어요.");
   if (isFreshClaim(latest, now)) throw new DomainError("BUSY", BUSY_MESSAGE);
+  const at = now.toISOString();
+
+  // A failed revision has nothing worth keeping: it takes the new request in place, so the version
+  // numbers stay contiguous and it still builds on the ready version before it.
+  if (latest.status === "failed" && latest.version > 1) {
+    const [reclaimed] = await db.batch([
+      db
+        .update(quoteVersions)
+        .set({ status: "generating", changeRequest: request, error: null, workflowId: null, generationStartedAt: at })
+        .where(and(eq(quoteVersions.id, latest.id), eq(quoteVersions.status, "failed")))
+        .returning({ id: quoteVersions.id }),
+      db.update(quotes).set({ updatedAt: at }).where(eq(quotes.id, quoteId)),
+    ]);
+    // Another tap (or a 다시 시도) took it first.
+    if (reclaimed.length === 0) throw new DomainError("BUSY", BUSY_MESSAGE);
+    return { version: latest.version };
+  }
   if (latest.status !== "ready") {
     throw new DomainError("INVALID_STATE", "지난 버전을 만들지 못했어요. 다시 시도한 뒤에 수정 요청을 해 주세요.");
   }
 
   const version = latest.version + 1;
-  const at = now.toISOString();
   try {
     await db.batch([
       db.insert(quoteVersions).values({
