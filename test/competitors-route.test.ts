@@ -4,7 +4,7 @@ import { competitorEvents, competitorPrices, watchSources } from "../database/sc
 import { action, loader } from "../app/routes/competitors";
 import { listEvents, listPriceGroups } from "../app/watch/competitors.server";
 import { safeHref } from "../app/watch/format";
-import { startWatchRun } from "../app/watch/run.server";
+import { startManualWatchRun, startWatchRun } from "../app/watch/run.server";
 import { getDb } from "../app/server/db";
 import { listWatchSources, saveWatchSource } from "../app/watch/sources.server";
 
@@ -308,5 +308,44 @@ describe("safeHref", () => {
     expect(safeHref("javascript:alert(1)")).toBeNull();
     expect(safeHref("data:text/html,x")).toBeNull();
     expect(safeHref("not a url")).toBeNull();
+  });
+});
+
+describe("startManualWatchRun", () => {
+  /** Instances by id with a status; create adds a running one. */
+  function wf(initial: Record<string, string>) {
+    const instances = new Map(Object.entries(initial));
+    const create = vi.fn(async ({ id }: { id: string }) => {
+      instances.set(id, "running");
+      return { id };
+    });
+    const get = vi.fn(async (id: string) => {
+      if (!instances.has(id)) throw new Error("instance.not_found");
+      return { status: async () => ({ status: instances.get(id)! }) };
+    });
+    return { create, get };
+  }
+
+  // 2026-11-10 00:00:30 KST: the hour (and the date) just turned over.
+  const now = new Date("2026-11-09T15:00:30Z");
+
+  it("waits for last hour's manual run that is still going", async () => {
+    const w = wf({ "watch-manual-2026-11-09-23": "running" });
+    expect(await startManualWatchRun(w as never, now)).toBe("already_running");
+    expect(w.create).not.toHaveBeenCalled();
+  });
+
+  it("starts when last hour's manual run is over", async () => {
+    const w = wf({ "watch-manual-2026-11-09-23": "complete" });
+    expect(await startManualWatchRun(w as never, now)).toBe("started");
+    expect(w.create.mock.calls[0]![0].id).toBe("watch-manual-2026-11-10-00");
+  });
+
+  it("counts a run whose state Cloudflare reports as unknown as still going", async () => {
+    for (const id of ["watch-2026-11-10", "watch-manual-2026-11-10-00", "watch-manual-2026-11-09-23"]) {
+      const w = wf({ [id]: "unknown" });
+      expect(await startManualWatchRun(w as never, now)).toBe("already_running");
+      expect(w.create).not.toHaveBeenCalled();
+    }
   });
 });

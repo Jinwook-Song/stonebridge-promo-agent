@@ -477,32 +477,45 @@ export async function startWatchRun(
   }
 }
 
-/** Instance states in which a run is still going (or about to). */
-const ACTIVE_STATES = new Set(["queued", "running", "waiting", "waitingForPause", "paused"]);
+/**
+ * Instance states in which a run is over. Every other state (queued, running, waiting, paused,
+ * and Cloudflare's "unknown") counts as still going: starting a second run that spends the same
+ * Claude budget is worse than one tap answered "이미 돌고 있어요".
+ */
+const FINISHED_STATES = new Set(["complete", "errored", "terminated"]);
 
 /** "none" when there is no such instance (or it cannot be read). */
 async function instanceState(workflow: Pick<Workflow, "get">, id: string): Promise<"active" | "finished" | "none"> {
   try {
     const { status } = await (await workflow.get(id)).status();
-    return ACTIVE_STATES.has(status) ? "active" : "finished";
+    return FINISHED_STATES.has(status) ? "finished" : "active";
   } catch {
     return "none";
   }
 }
 
+/** The manual run's instance id for the KST hour `at` falls in. */
+function manualIdAt(at: Date): string {
+  const hour = String(new Date(at.getTime() + 9 * 3600_000).getUTCHours()).padStart(2, "0");
+  return `watch-manual-${kst(at).date}-${hour}`;
+}
+
 /**
- * The owner's "run it now". Does nothing (already_running) while today's cron run or this hour's
- * manual run is still going, so taps and the cron cannot pile up runs that each spend the Claude
- * budget. Its instance id is per KST hour, so a second tap in the same hour finds the first
- * (already_finished once that run is over: the next one can start after the hour).
+ * The owner's "run it now". Does nothing (already_running) while today's cron run or a manual run
+ * from this hour or the one before is still going (a tap at 16:59 and one at 17:00 have different
+ * ids), so taps and the cron cannot pile up runs that each spend the Claude budget. Its instance id
+ * is per KST hour, so a second tap in the same hour finds the first (already_finished once that
+ * run is over: the next one can start after the hour).
  */
 export async function startManualWatchRun(
   workflow: Pick<Workflow, "create" | "get">,
   now: Date,
 ): Promise<"started" | "already_running" | "already_finished"> {
-  const hour = String(new Date(now.getTime() + 9 * 3600_000).getUTCHours()).padStart(2, "0");
-  const manualId = `watch-manual-${kst(now).date}-${hour}`;
+  const manualId = manualIdAt(now);
   if ((await instanceState(workflow, `watch-${kst(now).date}`)) === "active") return "already_running";
+  if ((await instanceState(workflow, manualIdAt(new Date(now.getTime() - 3600_000)))) === "active") {
+    return "already_running";
+  }
   const manual = await instanceState(workflow, manualId);
   if (manual === "active") return "already_running";
   if (manual === "finished") return "already_finished";
