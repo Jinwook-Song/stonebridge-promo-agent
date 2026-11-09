@@ -21,12 +21,15 @@ export type AlertSettings = {
   monthlyEnabled: boolean;
   /** 1–31; months without that day use their last day. */
   monthlyDay: number;
+  /** Message when a full draft is ready. On unless switched off: she asked for it by uploading. */
+  draftReadyEnabled: boolean;
 };
 
 const KEYS = {
   orderEnabled: "alert_order_enabled",
   monthlyEnabled: "alert_monthly_enabled",
   monthlyDay: "alert_monthly_day",
+  draftReadyEnabled: "alert_draft_ready_enabled",
 } as const satisfies Record<keyof AlertSettings, string>;
 
 const DEFAULT_MONTHLY_DAY = 1;
@@ -40,6 +43,8 @@ export async function getAlertSettings(db: Db): Promise<AlertSettings> {
     orderEnabled: byKey.get(KEYS.orderEnabled) === "1",
     monthlyEnabled: byKey.get(KEYS.monthlyEnabled) === "1",
     monthlyDay: Number.isInteger(day) && day >= 1 && day <= 31 ? day : DEFAULT_MONTHLY_DAY,
+    // Only an explicit "0" turns it off; no row yet means on.
+    draftReadyEnabled: byKey.get(KEYS.draftReadyEnabled) !== "0",
   };
 }
 
@@ -55,6 +60,9 @@ export async function saveAlertSettings(db: Db, patch: Partial<AlertSettings>): 
     values.push({ key: KEYS.monthlyEnabled, value: patch.monthlyEnabled ? "1" : "0" });
   }
   if (patch.monthlyDay !== undefined) values.push({ key: KEYS.monthlyDay, value: String(patch.monthlyDay) });
+  if (patch.draftReadyEnabled !== undefined) {
+    values.push({ key: KEYS.draftReadyEnabled, value: patch.draftReadyEnabled ? "1" : "0" });
+  }
   if (values.length === 0) return;
   await db
     .insert(settings)
@@ -77,9 +85,22 @@ export function kst(now: Date) {
   };
 }
 
-export function alertMessage(kind: AlertKind | "test", origin: string): MemoMessage {
+/** How much of the memo the draft-ready message quotes, so she can tell which post it is. */
+const MEMO_PREVIEW_CHARS = 30;
+
+export type DraftReadyInfo = { postId: number; memo: string };
+
+export function alertMessage(kind: AlertKind | "test", origin: string): MemoMessage;
+export function alertMessage(kind: "draft_ready", origin: string, info: DraftReadyInfo): MemoMessage;
+export function alertMessage(kind: AlertKind | "test" | "draft_ready", origin: string, info?: DraftReadyInfo): MemoMessage {
   const base = origin.replace(/\/+$/, "");
   switch (kind) {
+    case "draft_ready": {
+      // Code points, not UTF-16 units, so an emoji is never cut in half.
+      const chars = [...info!.memo];
+      const preview = chars.length > MEMO_PREVIEW_CHARS ? `${chars.slice(0, MEMO_PREVIEW_CHARS).join("")}…` : info!.memo;
+      return { text: `홍보글 초안이 준비됐어요\n${preview}`, url: `${base}/posts/${info!.postId}`, buttonTitle: "초안 보기" };
+    }
     case "order":
       return { text: "쿠팡 발주할 시간이에요\n카페 재료 주문 잊지 마세요.", url: `${base}/`, buttonTitle: "앱 열기" };
     case "monthly":

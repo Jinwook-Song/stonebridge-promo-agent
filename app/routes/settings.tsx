@@ -107,8 +107,15 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
         break;
       case "setAlert": {
         const enabled = str("enabled") === "1";
-        const kind = oneOf(["order", "monthly"] as const, form.get("kind"));
-        await saveAlertSettings(db, kind === "order" ? { orderEnabled: enabled } : { monthlyEnabled: enabled });
+        const kind = oneOf(["order", "monthly", "draft_ready"] as const, form.get("kind"));
+        await saveAlertSettings(
+          db,
+          kind === "order"
+            ? { orderEnabled: enabled }
+            : kind === "monthly"
+              ? { monthlyEnabled: enabled }
+              : { draftReadyEnabled: enabled },
+        );
         break;
       }
       case "setMonthlyDay": {
@@ -423,6 +430,12 @@ function KakaoSection({ kakao }: { kakao: KakaoView }) {
       </Card>
 
       <AlertToggle
+        kind="draft_ready"
+        enabled={kakao.alerts.draftReadyEnabled}
+        description="초안이 다 만들어지면 카톡으로 알려 드려요"
+        canSend={ready}
+      />
+      <AlertToggle
         kind="order"
         enabled={kakao.alerts.orderEnabled}
         description="매일 밤 11시 20분, 쿠팡 발주 알림"
@@ -455,6 +468,12 @@ function KakaoSection({ kakao }: { kakao: KakaoView }) {
   );
 }
 
+const TOGGLE_LABELS = {
+  draft_ready: "초안 완성 알림",
+  order: ALERT_LABELS.order,
+  monthly: ALERT_LABELS.monthly,
+} as const satisfies Record<AlertKind | "draft_ready", string>;
+
 function AlertToggle({
   kind,
   enabled: saved,
@@ -462,7 +481,7 @@ function AlertToggle({
   canSend,
   children,
 }: {
-  kind: AlertKind;
+  kind: AlertKind | "draft_ready";
   enabled: boolean;
   description: string;
   canSend: boolean;
@@ -475,7 +494,7 @@ function AlertToggle({
     <Card className="flex flex-col gap-2 p-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-sm font-medium">{ALERT_LABELS[kind]}</p>
+          <p className="text-sm font-medium">{TOGGLE_LABELS[kind]}</p>
           <p className="text-sm text-muted-foreground">{description}</p>
           {enabled && !canSend && <p className="mt-1 text-xs text-amber-700">카카오 연결이 안 돼 있어서 아직 안 가요.</p>}
         </div>
@@ -488,7 +507,7 @@ function AlertToggle({
             variant={enabled ? "default" : "outline"}
             className="h-11 min-w-16"
             aria-pressed={enabled}
-            aria-label={`${ALERT_LABELS[kind]} ${enabled ? "끄기" : "켜기"}`}
+            aria-label={`${TOGGLE_LABELS[kind]} ${enabled ? "끄기" : "켜기"}`}
           >
             {enabled ? "켜짐" : "꺼짐"}
           </Button>

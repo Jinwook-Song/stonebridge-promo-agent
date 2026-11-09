@@ -9,6 +9,7 @@ export default [
     route("posts/new", "routes/post-new.tsx"),
     route("posts/:id", "routes/post-detail.tsx"),
     route("api/posts/:id/status", "routes/api.post-status.ts"),
+    route("api/photo-pick", "routes/api.photo-pick.ts"),
     route("settings", "routes/settings.tsx"),
     route("kakao/connect", "routes/kakao.connect.ts"),
     route("kakao/callback", "routes/kakao.callback.ts"),

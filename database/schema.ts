@@ -46,6 +46,8 @@ export const posts = sqliteTable(
     outputTokens: integer("output_tokens"),
     createdAt: text("created_at").notNull(),
     generatedAt: text("generated_at"),
+    /** When the "초안 준비됐어요" Kakao alert was claimed; set once, so it is sent at most once. */
+    draftNotifiedAt: text("draft_notified_at"),
   },
   (t) => [
     check("posts_kind_check", inList(t.kind, POST_KINDS)),

@@ -152,10 +152,14 @@ describe("requireOwner / isOwner", () => {
     for (const req of [
       new Request("http://x/posts.data?_routes=routes%2Fposts"),
       new Request("http://x/posts", { method: "POST", body: new FormData() }),
+      // AI photo pick: spends Claude tokens, so an anonymous POST must never reach its action
+      new Request("http://x/api/photo-pick", { method: "POST", body: new FormData() }),
     ]) {
       await redirected(Promise.resolve(middleware[0]({ request: req, params: {}, context: {} } as never, next)));
     }
-  });
+    // The cold dynamic import above already takes ~4.5s while the pool runs every file at once, so the
+    // default 5s limit flakes; give it room.
+  }, 20_000);
 });
 
 describe("session secret validation", () => {

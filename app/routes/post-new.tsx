@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { CircleAlertIcon, ImagePlusIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { CircleAlertIcon } from "lucide-react";
+import { useState, type FormEvent } from "react";
 import { redirect, useNavigation, useSubmit } from "react-router";
 import type { Route } from "./+types/post-new";
 import { Button } from "../components/ui/button";
@@ -10,7 +10,8 @@ import { Textarea } from "../components/ui/textarea";
 import { startGeneration } from "../promo/generate.server";
 import { createPost } from "../promo/posts.server";
 import { resizeToJpeg } from "../promo/resize-image.client";
-import { KIND_LABELS, MAX_MEMO_CHARS, MAX_PHOTOS, POST_KINDS, type PostKind } from "../promo/types";
+import { PhotoPicker, usePhotoPicker } from "../promo/components/PhotoPicker";
+import { KIND_LABELS, MAX_MEMO_CHARS, POST_KINDS, type PostKind } from "../promo/types";
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
 import { cn } from "../lib/utils";
@@ -59,76 +60,42 @@ export async function action({ request }: Route.ActionArgs) {
   }
 }
 
-type Picked = { id: number; file: File; preview: string };
-
 export default function PostNew({ actionData }: Route.ComponentProps) {
   const submit = useSubmit();
   const navigation = useNavigation();
-  const [picked, setPicked] = useState<Picked[]>([]);
+  const picker = usePhotoPicker();
+  const [memo, setMemo] = useState("");
   const [kind, setKind] = useState<PostKind>("case");
   const [privateCustomer, setPrivateCustomer] = useState(false);
   const [attachPrices, setAttachPrices] = useState(false);
   const [resizing, setResizing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const nextId = useRef(0);
-  const previews = useRef<string[]>([]);
-
-  useEffect(
-    () => () => {
-      for (const url of previews.current) URL.revokeObjectURL(url);
-    },
-    [],
-  );
 
   const busy = resizing || navigation.state !== "idle";
   const error = localError ?? actionData?.error ?? null;
 
-  function addFiles(list: FileList | null) {
-    if (!list) return;
-    const room = MAX_PHOTOS - picked.length;
-    const added = Array.from(list)
-      .slice(0, Math.max(0, room))
-      .map((file) => {
-        const preview = URL.createObjectURL(file);
-        previews.current.push(preview);
-        return { id: nextId.current++, file, preview };
-      });
-    setLocalError(list.length > room ? `사진은 ${MAX_PHOTOS}장까지 올릴 수 있어요.` : null);
-    setPicked((prev) => [...prev, ...added]);
-  }
-
-  function removeFile(id: number) {
-    setPicked((prev) => {
-      const gone = prev.find((p) => p.id === id);
-      if (gone) {
-        URL.revokeObjectURL(gone.preview);
-        previews.current = previews.current.filter((u) => u !== gone.preview);
-      }
-      return prev.filter((p) => p.id !== id);
-    });
-    setLocalError(null);
-  }
-
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy) return;
-    const form = new FormData(event.currentTarget);
-    const memo = String(form.get("memo") ?? "").trim();
-    if (!memo) {
+    if (busy || picker.preparing) return;
+    const trimmed = memo.trim();
+    if (!trimmed) {
       setLocalError("메모를 입력해 주세요.");
       return;
     }
     setLocalError(null);
+    // Posting never waits for the AI: her current selection goes as it is.
+    picker.cancelPick();
 
     const body = new FormData();
     body.set("kind", kind);
-    body.set("memo", memo);
+    body.set("memo", trimmed);
     if (privateCustomer) body.set("privateCustomer", "on");
     if (attachPrices) body.set("attachPrices", "on");
 
     setResizing(true);
     try {
-      for (const { file } of picked) {
+      // Originals, in the chosen order, resized as before; the thumbnails are only for the grid.
+      for (const { file } of picker.selected) {
         const { blob, width, height } = await resizeToJpeg(file);
         body.append("photos", blob, "photo.jpg");
         body.append("photoWidth", String(width));
@@ -147,52 +114,7 @@ export default function PostNew({ actionData }: Route.ComponentProps) {
     <form onSubmit={onSubmit} className="flex flex-col gap-5">
       <h1 className="text-lg font-semibold">새 글</h1>
 
-      <section aria-labelledby="photos-title" className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between">
-          <h2 id="photos-title" className="text-sm font-medium text-foreground/80">
-            사진
-          </h2>
-          <span className="text-xs text-muted-foreground">
-            {picked.length}/{MAX_PHOTOS}장
-          </span>
-        </div>
-        <ul className="grid grid-cols-3 gap-2">
-          {picked.map((p, i) => (
-            <li key={p.id} className="relative aspect-square overflow-hidden rounded-lg border bg-muted">
-              <img src={p.preview} alt={`선택한 사진 ${i + 1}`} className="size-full object-cover" />
-              <button
-                type="button"
-                onClick={() => removeFile(p.id)}
-                aria-label={`사진 ${i + 1} 빼기`}
-                className="absolute top-0 right-0 flex size-11 items-start justify-end p-1.5"
-              >
-                <span className="flex size-6 items-center justify-center rounded-full bg-black/65 text-white">
-                  <XIcon className="size-4" aria-hidden="true" />
-                </span>
-              </button>
-            </li>
-          ))}
-          {picked.length < MAX_PHOTOS && (
-            <li>
-              <label className="flex aspect-square min-h-11 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-input bg-card text-sm text-muted-foreground active:bg-accent has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring/40">
-                <ImagePlusIcon className="size-6" aria-hidden="true" />
-                사진 추가
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="sr-only"
-                  onChange={(e) => {
-                    addFiles(e.currentTarget.files);
-                    e.currentTarget.value = "";
-                  }}
-                />
-              </label>
-            </li>
-          )}
-        </ul>
-        <p className="text-xs text-muted-foreground">사진은 없어도 돼요. 최대 {MAX_PHOTOS}장까지 올릴 수 있어요.</p>
-      </section>
+      <PhotoPicker picker={picker} disabled={busy} memo={memo} kind={kind} privateCustomer={privateCustomer} />
 
       <Field label="메모" htmlFor="memo" hint={`${MAX_MEMO_CHARS}자까지 쓸 수 있어요.`}>
         <Textarea
@@ -201,6 +123,8 @@ export default function PostNew({ actionData }: Route.ComponentProps) {
           rows={5}
           maxLength={MAX_MEMO_CHARS}
           placeholder={MEMO_PLACEHOLDER}
+          value={memo}
+          onChange={(e) => setMemo(e.currentTarget.value)}
           className="min-h-32"
         />
       </Field>
@@ -245,8 +169,8 @@ export default function PostNew({ actionData }: Route.ComponentProps) {
         </p>
       )}
 
-      <Button type="submit" size="lg" className="h-12" disabled={busy}>
-        {resizing ? "사진 준비 중…" : busy ? "올리는 중…" : "초안 만들기"}
+      <Button type="submit" size="lg" className="h-12" disabled={busy || picker.preparing !== null}>
+        {resizing || picker.preparing ? "사진 준비 중…" : busy ? "올리는 중…" : "초안 만들기"}
       </Button>
     </form>
   );

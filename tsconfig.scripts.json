@@ -6,6 +6,7 @@
     "app/kakao/types.ts",
     "app/promo/claude.server.ts",
     "app/promo/default-rules.ts",
+    "app/promo/photo-pick.server.ts",
     "app/promo/examples.server.ts",
     "app/promo/fact-check.ts",
     "app/promo/prompt.ts",
