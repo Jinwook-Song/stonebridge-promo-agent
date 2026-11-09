@@ -88,6 +88,32 @@ function cleanEvent(event: QuoteEvent): QuoteEvent {
   return { ...event, headcount, missing: event.missing.map((m) => m.trim()).filter((m) => m !== "") };
 }
 
+const EVENT_TEXT_KEYS = [
+  "customerName",
+  "contactName",
+  "contact",
+  "email",
+  "eventDate",
+  "venue",
+  "eventType",
+  "budget",
+  "requests",
+] as const satisfies readonly (keyof QuoteEvent)[];
+
+/**
+ * A revision's event: the model's, except that a field it left empty keeps the previous version's
+ * value (which the owner may have confirmed or typed in). `missing` is the model's: code cannot
+ * tell a re-added question from a new one, so the prompt rule covers it.
+ */
+function revisedEvent(model: QuoteEvent, prev: QuoteEvent): QuoteEvent {
+  const event = { ...model };
+  for (const key of EVENT_TEXT_KEYS) {
+    if (event[key].trim() === "" && prev[key].trim() !== "") event[key] = prev[key];
+  }
+  if (event.headcount === null && prev.headcount !== null) event.headcount = prev.headcount;
+  return event;
+}
+
 function importedLines(lines: ImportOutput["lines"]): QuoteLine[] {
   return lines.map((l) => ({
     itemId: null,
@@ -177,7 +203,7 @@ async function quoteVersion(
       ]
     : null;
   return {
-    event: cleanEvent(output.event),
+    event: prev ? revisedEvent(cleanEvent(output.event), prev.event) : cleanEvent(output.event),
     lines,
     comparison: comparisonOf(output.comparison.notes, output.comparison.citedIds, candidates),
     emailSubject: output.email.subject,

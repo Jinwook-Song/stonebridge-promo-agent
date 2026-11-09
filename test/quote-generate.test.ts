@@ -900,6 +900,57 @@ describe("requestRevision on a failed latest version", () => {
   });
 });
 
+describe("revisions keep the event the owner confirmed", () => {
+  it("system prompt keeps the previous event unless the request changes it, and does not re-ask cleared questions", () => {
+    const system = buildQuoteSystem();
+    expect(system).toContain("행사 정보(event)는 이전 버전 행사 정보를 그대로 쓴다. 수정 요청이 바꾸라는 칸만 바꾼다.");
+    expect(system).toContain("missing에는 아직 풀리지 않은 것만 남긴다");
+  });
+
+  it("v2 keeps an edited headcount and customer when the model leaves them empty", async () => {
+    const { quoteId } = await createQuote(db, { text: "다과 견적", source: "app" }, T0);
+    await startAndRun(quoteId, 1);
+    await saveEvent(db, quoteId, 1, { ...EVENT, headcount: 45, customerName: "고친 학원", missing: [] }, T1);
+    await requestRevision(db, quoteId, "음료는 빼 주세요", T1);
+
+    const quote = vi.fn<QuoteCall>(
+      fixedQuote(output({ event: { ...EVENT, headcount: null, customerName: "", venue: "새 강당", missing: [] } })),
+    );
+    await startAndRun(quoteId, 2, deps({ quote }));
+
+    // The model was shown the owner's edits as the previous event.
+    const text = textOf(quote.mock.calls[0][0].user);
+    expect(text).toContain(`"headcount":45`);
+    expect(text).toContain(`"customerName":"고친 학원"`);
+    // Empty answers keep what she confirmed; a value the model did give is used.
+    expect((await getQuote(db, quoteId)).version.event).toMatchObject({
+      headcount: 45,
+      customerName: "고친 학원",
+      venue: "새 강당",
+      missing: [],
+    });
+  });
+
+  it("v2 uses the model's event as is when it fills every field", async () => {
+    const { quoteId } = await createQuote(db, { text: "다과 견적", source: "app" }, T0);
+    await startAndRun(quoteId, 1);
+    await requestRevision(db, quoteId, "인원 50명으로", T1);
+    const next = { ...EVENT, headcount: 50 };
+    await startAndRun(quoteId, 2, deps({ quote: fixedQuote(output({ event: next })) }));
+    expect((await getQuote(db, quoteId)).version.event).toEqual(next);
+  });
+});
+
+describe("the customer never sees the comparison candidates", () => {
+  it("system prompt keeps other customers and competitors out of the email and note", () => {
+    const system = buildQuoteSystem();
+    expect(system).toContain("비교 후보(다른 손님 견적, 경쟁 업체)는 메일과 note에 쓰지 않는다.");
+    // Both customer-facing places carry the rule.
+    expect(system.slice(system.indexOf("## 회신 메일"))).toContain("비교 후보");
+    expect(system.slice(system.indexOf("## 견적 구성"), system.indexOf("## 가격 규칙"))).toContain("비교 후보");
+  });
+});
+
 describe("v1 candidates are ranked by the pasted text", () => {
   it("puts own quotes whose event type appears in the inquiry first", async () => {
     const own = async (day: number, eventType: string) => {
