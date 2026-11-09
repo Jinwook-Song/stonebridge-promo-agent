@@ -34,6 +34,7 @@ import {
   setStatus,
   setVat,
 } from "../app/quote/quotes.server";
+import type { PriceItem } from "../app/quote/lines";
 import type { QuoteEvent, QuoteLine } from "../app/quote/types";
 import { getDb } from "../app/server/db";
 import { DomainError } from "../app/server/errors";
@@ -571,6 +572,67 @@ describe("prompt", () => {
     expect(system).toContain("missing");
     expect(system).toContain("citedIds");
     expect(buildImportSystem()).toContain("가격을 매기지");
+  });
+
+  it("system prompt says which lines a quote is made of, before the price rules", () => {
+    const system = buildQuoteSystem();
+    expect(system).toContain("## 견적 구성");
+    expect(system.indexOf("## 견적 구성")).toBeLessThan(system.indexOf("## 가격 규칙"));
+    // One line per thing the customer asked for; a missing sheet item still gets a line.
+    expect(system).toContain("손님이 원한 것");
+    expect(system).toContain("줄을 하나씩 만든다");
+    // Fixed per-event costs go in as lines; waiving them is the owner's SVC call.
+    expect(system).toContain("1회 기본 비용");
+    expect(system).toContain("면제 여부는 사장님이 SVC로 정한다");
+    // No unrequested upgrades, and the budget never trims lines.
+    expect(system).toContain("메뉴 업그레이드");
+    expect(system).toContain("예산에 맞추려고 줄을 빼거나 수량을 줄이지 않는다");
+    // A revision asking to drop a fixed cost keeps the line and only suggests SVC.
+    expect(system).toContain("1회 기본 비용 줄을 빼 달라는 요청");
+    // Existing rules stay.
+    expect(system).toContain("요청에 없는 줄은 그대로 둔다");
+    expect(system).toContain("SVC 제안");
+  });
+
+  it("each sheet row tells the model its kind, price, menu and note", () => {
+    const item = (over: Partial<PriceItem>): PriceItem => ({
+      id: 1,
+      kind: "per_person",
+      name: "",
+      content: "",
+      unit: "",
+      unitPrice: null,
+      minimumQty: null,
+      menu: "",
+      note: "",
+      needsConfirm: false,
+      enabled: true,
+      sort: 0,
+      createdAt: T0.toISOString(),
+      ...over,
+    });
+    const text = textOf(
+      buildQuoteUser({
+        text: "견적",
+        sheet: [
+          item({ id: 11, kind: "per_person", name: "예시 다과", unit: "인", unitPrice: 5000, minimumQty: 30, menu: "쿠키·머핀" }),
+          item({ id: 12, kind: "per_event", name: "예시 출장비", content: "기타", unit: "회", unitPrice: 1000, note: "기본 1시간" }),
+          item({ id: 13, kind: "per_event", name: "예시 연출", unit: "건", unitPrice: null }),
+        ],
+        candidates: [],
+        prev: null,
+        changeRequest: null,
+      }),
+    );
+    expect(text).toContain("1인 = 인원수만큼");
+    expect(text).toContain(
+      `{"id":11,"kind":"1인","name":"예시 다과","content":"","unit":"인","unitPrice":5000,"minimumQty":30,"menu":"쿠키·머핀","note":""}`,
+    );
+    expect(text).toContain(
+      `{"id":12,"kind":"1회","name":"예시 출장비","content":"기타","unit":"회","unitPrice":1000,"minimumQty":null,"menu":"","note":"기본 1시간"}`,
+    );
+    expect(text).toContain(`"id":13,"kind":"1회"`);
+    expect(text).toContain(`"unitPrice":"단가 없음"`);
   });
 
   it("user content numbers previous lines from 0 and includes the change request", () => {
