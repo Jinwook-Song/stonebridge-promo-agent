@@ -6,8 +6,9 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "stonebridge-promo",
 	"compatibility_date": "2026-10-30",
-	// AsyncLocalStorage carries the per-request D1 session (app/server/db.ts)
-	"compatibility_flags": ["nodejs_als"],
+	// nodejs_compat includes nodejs_als: AsyncLocalStorage carries the per-request D1 session (app/server/db.ts);
+	// exceljs (quote .xlsx) needs the rest of nodejs_compat
+	"compatibility_flags": ["nodejs_compat"],
 	"main": "./workers/app.ts",
 	"observability": {
 		"enabled": true
