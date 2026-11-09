@@ -53,3 +53,14 @@
 - [ ] **새 D1 마이그레이션이 있으면 배포 전에 먼저 원격에 적용한다.** 순서는 `npx wrangler d1 migrations apply promo-agent --remote` → `npm run deploy`.
   - 앱을 마이그레이션보다 먼저 배포하면 안 된다. drizzle이 스키마의 모든 칸을 SELECT해서, 새 칸이 아직 없으면 글 페이지가 전부 실패한다.
   - 이번 배포에 필요한 것: `0003_draft_ready_alert.sql` (`posts.draft_notified_at` 칸 추가).
+
+## 견적 에이전트 (2026-11-09 배포)
+
+- [ ] **새 Workflow 바인딩**: `wrangler.jsonc`의 `QUOTE_GENERATE` (`quote-generate`, `QuoteGenerateWorkflow`). `npm run deploy`가 같이 만든다. 배포 결과의 Bindings 목록에 `env.QUOTE_GENERATE`가 보이는지 확인한다.
+- [ ] **호환 플래그**: `nodejs_compat` (엑셀 `exceljs`가 필요로 한다). `nodejs_als`를 포함한다.
+- [ ] **마이그레이션 `0004_quote_agent.sql`** (표 6개 추가: `quotes`, `quote_versions`, `price_items`, `competitor_events`, `competitor_prices`, `watch_sources`). 배포 전에 먼저 `npx wrangler d1 migrations apply promo-agent --remote`. 추가만 하는 마이그레이션이라 기존 화면은 영향이 없다.
+- [ ] **비공개 시드** (`private/seed-quote-2026-11-09.sql`, git에 올리지 않는다): `npx wrangler d1 execute promo-agent --remote --file private/seed-quote-2026-11-09.sql`
+  - 다시 실행해도 안전하다. 가격 항목은 같은 이름이 없을 때만 넣고(사장님이 고친 값은 남는다), 소개 문구와 기본 제공 사항은 덮어쓴다.
+  - 가격 항목은 모두 `needs_confirm = 1`이다. 사장님이 앱의 가격표에서 저장하면 확인된 것으로 바뀐다.
+  - 소개 문구는 분석 문서에 일부만 있어서 사장님 확인이 필요하다. 발신 정보(`quote_sender`)는 넣지 않는다 (기본값 스톤테이블, 사업자 등록 후 설정에서 입력).
+- [ ] **실제 확인**: `npx wrangler tail`을 켜 두고, 가짜 문의로 견적을 만든다 → 수정 요청으로 v2 → 엑셀 받기(200, `filename*`) → 테스트 견적 지우기. 2026-11-09 실측: v1 약 16초(입력 5,973 / 출력 748 토큰), v2 약 17초(캐시 읽기 5,195 토큰), 두 번 합쳐 약 $0.07.
