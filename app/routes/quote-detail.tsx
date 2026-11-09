@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { CheckIcon, CircleAlertIcon, CopyIcon, DownloadIcon, LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { data, Link, redirect, useFetcher } from "react-router";
 import type { Route } from "./+types/quote-detail";
 import { Button } from "../components/ui/button";
@@ -12,6 +12,7 @@ import { Textarea } from "../components/ui/textarea";
 import { copyText } from "../promo/clipboard";
 import { useStatusPolling } from "../promo/components/use-status-polling";
 import { formatDay } from "../promo/format-date";
+import { ownQuoteId } from "../quote/comparison-view";
 import { ComparisonPanel } from "../quote/components/ComparisonPanel";
 import { EventForm } from "../quote/components/EventForm";
 import { LinesTable, type LinesHandle } from "../quote/components/LinesTable";
@@ -20,6 +21,7 @@ import { startQuoteGeneration } from "../quote/generate.server";
 import { listPriceItems } from "../quote/price-sheet.server";
 import {
   deleteQuote,
+  existingQuoteIds,
   getQuote,
   isFreshClaim,
   requestRevision,
@@ -63,7 +65,11 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     if (e instanceof DomainError && e.code === "NOT_FOUND") throw data(e.message, { status: 404 });
     throw e;
   }
-  const sheet = await listPriceItems(db, { enabledOnly: true });
+  const ownIds = (view.version.comparison?.rows ?? []).map(ownQuoteId).filter((n) => n !== null);
+  const [sheet, liveQuoteIds] = await Promise.all([
+    listPriceItems(db, { enabledOnly: true }),
+    existingQuoteIds(db, ownIds),
+  ]);
 
   const latest = view.versions.at(-1)!;
   const isLatest = view.version.version === latest.version;
@@ -83,6 +89,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       menu: s.menu,
       note: s.note,
     })),
+    liveQuoteIds,
     latestVersion: latest.version,
     latestStatus: latest.status,
     isLatest,
@@ -381,6 +388,7 @@ function RevisionForm({ quoteId, initial = "", label = "수정 요청 보내기"
 
 function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullable<Loaded["version"]["lines"]>; event: QuoteEvent }) {
   const { quote, version, sheet, isLatest } = loaded;
+  const liveQuoteIds = useMemo(() => new Set(loaded.liveQuoteIds), [loaded.liveQuoteIds]);
   const readOnly = !isLatest;
   const vatFetcher = useFetcher<QuoteActionResult>();
   // The switch moves at once; the reloaded page then agrees.
@@ -439,7 +447,7 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
       </Section>
 
       <Section title="비교">
-        <ComparisonPanel comparison={version.comparison} />
+        <ComparisonPanel comparison={version.comparison} liveQuoteIds={liveQuoteIds} />
       </Section>
 
       <Section title="회신 메일">

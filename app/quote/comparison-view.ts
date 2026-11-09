@@ -6,17 +6,29 @@ export const PANEL_LIMIT = 5;
 
 const KIND_ORDER: ComparisonRow["kind"][] = ["own", "price", "event"];
 
-/** `cited`: the AI's note rests on it. `href`: the app page of an own quote (row id `q<quoteId>`). */
+/**
+ * `cited`: the AI's note rests on it. `href`: the app page of an own quote (row id `q<quoteId>`),
+ * null once that quote is deleted.
+ */
 export type PanelRow = ComparisonRow & { cited: boolean; href: string | null };
 export type PanelGroup = { kind: ComparisonRow["kind"]; rows: PanelRow[] };
 
-function ownHref(row: ComparisonRow): string | null {
+/** The quote an own row stands for, or null for other rows. */
+export function ownQuoteId(row: ComparisonRow): number | null {
   const m = row.kind === "own" ? /^q(\d+)$/.exec(row.id) : null;
-  return m ? `/quotes/${m[1]}` : null;
+  return m ? Number(m[1]) : null;
 }
 
-/** Non-empty kinds in order (own quotes, competitor prices, competitor events); cited rows first. */
-export function comparisonGroups(comparison: Comparison): PanelGroup[] {
+/**
+ * Non-empty kinds in order (own quotes, competitor prices, competitor events); cited rows first.
+ * `liveQuoteIds`: own quotes that still exist (the stored rows outlive a deleted quote); left out,
+ * every own row links.
+ */
+export function comparisonGroups(comparison: Comparison, liveQuoteIds?: ReadonlySet<number>): PanelGroup[] {
+  const ownHref = (row: ComparisonRow) => {
+    const id = ownQuoteId(row);
+    return id === null || (liveQuoteIds && !liveQuoteIds.has(id)) ? null : `/quotes/${id}`;
+  };
   const cited = new Set(comparison.citedIds);
   return KIND_ORDER.map((kind) => {
     const rows = comparison.rows

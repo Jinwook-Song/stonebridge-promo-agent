@@ -39,3 +39,14 @@ describe("comparisonGroups", () => {
     expect(visibleRows(group, true)).toHaveLength(PANEL_LIMIT + 3);
   });
 });
+
+describe("comparisonGroups own-quote links", () => {
+  it("links only own quotes that still exist", () => {
+    const rows = [row("q7", "own"), row("q8", "own")];
+    const [own] = comparisonGroups({ notes: "", rows, citedIds: [] }, new Set([8]));
+    expect(own.rows.map((r) => [r.id, r.href])).toEqual([
+      ["q7", null],
+      ["q8", "/quotes/8"],
+    ]);
+  });
+});
