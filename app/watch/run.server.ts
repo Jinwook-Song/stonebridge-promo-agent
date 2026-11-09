@@ -27,10 +27,11 @@ export const WATCH_CRON = "0 18 * * *";
 /** New feed posts read per source per run. */
 export const RSS_ITEMS_PER_RUN = 10;
 /**
- * An RSS source stops taking new posts after this long, so its 5-minute Workflow step ends on its
- * own (with what it did saved) instead of timing out and being retried.
+ * An RSS source stops taking new posts after this long (counted from before the feed fetch), so
+ * its 5-minute Workflow step ends on its own (with what it did saved) instead of timing out and
+ * being retried. The rest of the step is headroom for the post being read when the limit passes.
  */
-export const RSS_TIME_LIMIT_MS = 210_000;
+export const RSS_TIME_LIMIT_MS = 180_000;
 /** A price page is read once a week. */
 const PAGE_INTERVAL_MS = 7 * 24 * 3600_000;
 const MAX_ERROR_CHARS = 200;
@@ -162,9 +163,10 @@ function newItems(items: RssItem[], lastSeenKey: string | null): RssItem[] {
 /**
  * What m.blog.naver.com answers for a post that is not there: a tiny page that sends the browser
  * to `/MobileErrorView.naver?errorType=noPost` (checked 2026-11-09; HTTP 404 then, the spike saw a
- * 200 page). A block or captcha page has no paragraphs either, but not this.
+ * 200 page). A block or captcha page has no paragraphs either, but not this; other error views
+ * are not taken for a deleted post.
  */
-const NAVER_GONE = /MobileErrorView\.naver/;
+const NAVER_GONE = /MobileErrorView\.naver\?errorType=noPost/;
 
 /** Statuses after which a post will not come back; anything else (429, 5xx) is retried. */
 const GONE_STATUSES = new Set([404, 410]);
@@ -209,11 +211,11 @@ async function runRss(
   now: Date,
   progress: Progress,
 ): Promise<Done> {
+  const started = deps.now().getTime();
   const items = parseRss(await fetchOk(deps, source.url));
   // An error page, a login wall or a changed format reads as no items; say so instead of "ok".
   if (items.length === 0) throw new Error("피드에서 글을 찾지 못했어요");
 
-  const started = deps.now().getTime();
   let read = 0;
   let gone = 0;
   for (const item of newItems(newestFirst(items), source.lastSeenKey)) {
@@ -403,14 +405,14 @@ export async function runWatch(
 // ---- Start and real dependencies -----------------------------------------------------------
 
 /**
- * Starts today's run (instance id `watch-<KST date>`). A second start the same day (the cron
- * fired twice) finds that instance and does nothing.
+ * Starts today's run (instance id `watch-<KST date>`, or `id` for a manual run). A second start
+ * with the same id (the cron fired twice) finds that instance and does nothing.
  */
 export async function startWatchRun(
   workflow: Pick<Workflow, "create" | "get">,
   now: Date,
+  id: string = `watch-${kst(now).date}`,
 ): Promise<"started" | "already_started"> {
-  const id = `watch-${kst(now).date}`;
   try {
     await workflow.create({ id });
     return "started";

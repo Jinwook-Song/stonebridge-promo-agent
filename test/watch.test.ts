@@ -284,6 +284,16 @@ describe("runWatchSource (rss)", () => {
     expect((await source(id)).lastSeenKey).toBe("103");
   });
 
+  it("does not treat another Naver error view as a deleted post (it may be a block): errors, key stays", async () => {
+    const id = await addSource("rss", { lastSeenKey: "101" });
+    const blocked = `<script>location.href = "/MobileErrorView.naver?errorType=blocked";</script>`;
+    const { deps, eventCalls } = fakeDeps({ ...feedRoutes(), [postUrl("102")]: () => html(blocked) });
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 0, added: 0, status: "error" });
+    expect(eventCalls).toHaveLength(0);
+    expect(await source(id)).toMatchObject({ lastSeenKey: "101", lastStatus: "error" });
+  });
+
   it("errors (keys moved past) when every post read this run was deleted", async () => {
     const id = await addSource("rss", { lastSeenKey: "102" });
     const routes = { ...feedRoutes(), [postUrl("103")]: () => html(DELETED_POST) };
@@ -347,6 +357,27 @@ describe("runWatchSource (rss)", () => {
     expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 1, added: 1, status: "ok" });
     expect(eventCalls).toHaveLength(1);
     expect((await source(id)).lastSeenKey).toBe("102");
+  });
+
+  it("counts the slow feed fetch against the time limit", async () => {
+    const id = await addSource("rss", { lastSeenKey: "101" });
+    let t = NOW.getTime();
+    const clock = () => new Date(t);
+    const { deps, eventCalls } = fakeDeps(feedRoutes(), { clock });
+    const realFetch = deps.fetch;
+    deps.fetch = async (input, init) => {
+      const res = await realFetch(input, init);
+      // Only the feed is slow.
+      if (String(input) === FEED_URL) t += RSS_TIME_LIMIT_MS;
+      return res;
+    };
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 0, added: 0, status: "ok" });
+    expect(eventCalls).toHaveLength(0);
+  });
+
+  it("keeps the RSS time limit well inside the 5-minute step", () => {
+    expect(RSS_TIME_LIMIT_MS).toBeLessThanOrEqual(180_000);
   });
 
   it("errors when the feed has no items (an error page or a changed format)", async () => {

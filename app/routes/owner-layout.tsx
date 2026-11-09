@@ -29,6 +29,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 const LINKS = [
   { to: "/", label: "글 목록", end: true },
   { to: "/quotes", label: "견적", end: false },
+  { to: "/competitors", label: "경쟁 업체", end: false },
   { to: "/settings", label: "설정", end: false },
 ];
 

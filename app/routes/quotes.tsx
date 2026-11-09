@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { ChevronRightIcon, PlusIcon } from "lucide-react";
+import { ChevronRightIcon, PlusIcon, UploadIcon } from "lucide-react";
 import { Link } from "react-router";
 import type { Route } from "./+types/quotes";
 import { Badge } from "../components/ui/badge";
@@ -26,13 +26,21 @@ const STATUS_VARIANT: Record<QuoteStatus, "muted" | "info" | "success" | "destru
   lost: "destructive",
 };
 
-function NewQuoteButton() {
+function NewQuoteButtons() {
   return (
-    <Button asChild size="lg" className="h-12 w-full sm:w-auto sm:self-start">
-      <Link to="/quotes/new">
-        <PlusIcon aria-hidden="true" />새 견적
-      </Link>
-    </Button>
+    <div className="flex flex-col gap-2 sm:flex-row">
+      <Button asChild size="lg" className="h-12 w-full sm:w-auto">
+        <Link to="/quotes/new">
+          <PlusIcon aria-hidden="true" />새 견적
+        </Link>
+      </Button>
+      <Button asChild size="lg" variant="outline" className="h-12 w-full sm:w-auto">
+        <Link to="/quotes/import">
+          <UploadIcon aria-hidden="true" />
+          지난 견적 가져오기
+        </Link>
+      </Button>
+    </div>
   );
 }
 
@@ -42,13 +50,13 @@ export default function Quotes({ loaderData }: Route.ComponentProps) {
     return (
       <div className="flex flex-col items-center gap-4 py-16 text-center">
         <p className="text-base text-muted-foreground">아직 만든 견적이 없어요. 문의 내용을 붙여 넣어 첫 견적을 만들어 보세요.</p>
-        <NewQuoteButton />
+        <NewQuoteButtons />
       </div>
     );
   }
   return (
     <div className="flex flex-col gap-4">
-      <NewQuoteButton />
+      <NewQuoteButtons />
       <h1 className="sr-only">견적 목록</h1>
       <ul className="flex flex-col divide-y rounded-xl border bg-card">
         {quotes.map((q) => (
