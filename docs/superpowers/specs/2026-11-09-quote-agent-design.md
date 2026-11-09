@@ -1,262 +1,239 @@
-# Catering quote agent (스톤테이블) — design (2026-11-09)
+# 케이터링 견적 에이전트 (스톤테이블) 설계 (2026-11-09)
 
-> **This repo is public.** Real unit prices, the owner's past quotes, customer details and the
-> competitor research data stay out of git. They live in D1 (entered through the app or seeded by
-> a script in the gitignored `private/` folder). This document names competitors only generically.
+> **이 저장소는 공개 저장소다.** 실제 단가, 사장님의 지난 견적, 손님 정보, 경쟁 업체 조사 자료는
+> git에 넣지 않는다. 이것들은 D1에만 둔다. 넣는 방법은 앱 화면에서 입력하거나, gitignore된
+> `private/` 폴더의 스크립트로 처음 값을 넣는 것이다. 이 문서는 경쟁 업체를 일반적인 이름으로만 부른다.
 
-## 1. Why
+## 1. 왜
 
-The owner runs a dessert/다과 catering side business, **스톤테이블**, separate from the cafe
-(business registration not done yet). Inquiries come by phone. She replies by email with an
-Excel quote and usually goes through about 3 revisions. She has no price list.
+사장님은 카페와 별도로 다과 케이터링 사업 **스톤테이블**을 한다(사업자 등록은 아직). 문의는 전화로
+온다. 견적은 엑셀 파일을 메일에 첨부해 보내고, 보통 3번쯤 수정이 오간다. 가격표는 없다.
 
-What the interview showed (answers f01, f08, f11, f12):
+인터뷰에서 알게 된 것 (답 f01, f08, f11, f12):
 
-- The Excel step itself takes **~20 min**. The rest of the **1–6 h** per quote goes to research:
+- 엑셀 작업 자체는 **약 20분**이다. 견적 한 건에 드는 **1~6시간**의 나머지는 조사에 쓴다:
   "다른 업체는 어떤 메뉴를 어떤 비용으로 납품했는지 비교분석… 그 업체가 지난번엔 어디를 했는지".
-- What she most wants from competitor research: **price range and menu composition**. Main
-  reference: "드호".
-- Discounts are shown as **SVC**: the line keeps its list price and the amount says SVC (free).
-  She does this "담당자가 네고를 원할 때나 예산이 빠듯할 때".
-- Quotes will go out under the 스톤테이블 name once the business is registered.
+- 경쟁 업체 조사에서 가장 알고 싶은 것: **가격대와 메뉴 구성**. 주로 보는 업체는 "드호".
+- 할인은 **SVC**로 표시한다. 정가는 그대로 두고 금액 칸에 SVC(무료)라고 쓴다.
+  SVC를 쓰는 때: "담당자가 네고를 원할 때나 예산이 빠듯할 때".
+- 사업자 등록 후에는 스톤테이블 이름으로 견적을 보낸다.
 
-Competitor research done 2026-11-09 (raw data in `private/competitor-research-2026-11-09/`):
+경쟁 업체 조사 (2026-11-09, 원자료는 `private/competitor-research-2026-11-09/`):
 
-- **Who catered where, when, and with which menu** is public for most caterers. Naver blog
-  titles and posts name the venue or client and the date, often with a quantity. Posts appear
-  almost daily. Roughly 80% of this can be automated (RSS + post pages, no login).
-- **Published price lists** exist for larger agencies and coffee/다과 businesses, as plain-HTML
-  pages with exact per-person prices, minimums and fees. Pages contradict each other (two prices
-  for the same package; one subdomain shows numbers, another shows "상담").
-- **Small local caterers at her tier publish no prices.** What a given event actually cost is
-  almost never public. Her own past quotes are the only price data at her tier.
-- Blocked without a browser login: Instagram posts, 숨고, smart-store pages (HTTP 429/403).
+- **누가 어디서 언제 어떤 메뉴로 했는지**는 대부분 공개돼 있다. 네이버 블로그 제목과 본문에 장소나
+  고객, 날짜가 나오고, 수량이 나올 때도 많다. 글은 거의 매일 올라온다. 로그인 없이 RSS와 글
+  페이지로 약 80%를 자동으로 모을 수 있다.
+- **공개 가격표**는 규모가 큰 대행사나 커피·다과 업체에 있다. 일반 HTML 페이지에 1인 단가, 최소
+  주문, 추가 비용이 정확히 나온다. 다만 페이지끼리 숫자가 다르다(같은 패키지에 가격 두 개, 한
+  서브도메인은 숫자, 다른 곳은 "상담").
+- **사장님과 비슷한 규모의 동네 업체는 가격을 공개하지 않는다.** 특정 행사에 실제로 얼마를 받았는지는
+  거의 알 수 없다. 이 가격대의 가격 자료는 사장님의 지난 견적뿐이다.
+- 브라우저 로그인 없이는 막힌 곳: 인스타그램 글, 숨고, 스마트스토어 페이지 (HTTP 429/403).
 
-So the design moves research out of quote time. A **daily watch** collects competitor events and
-published prices into D1. At quote time the agent **looks up** that log. (The playback the
-developer approved had research running at quote time. Changing it was my call, based on the
-findings above.)
+그래서 조사를 견적 시점에서 떼어 낸다. **매일 경쟁 업체를 살펴보는 작업**이 행사 소식과 공개 가격을
+D1에 모으고, 견적을 만들 때는 그 기록을 **찾아보기만** 한다. 진욱님이 승인한 처음 정리에서는 견적을
+만들 때마다 조사하는 방식이었다. 위 조사 결과를 보고 내가 바꿨다.
 
-## 2. Goals
+## 2. 목표
 
-1. **Quote draft from a pasted inquiry.** She pastes a call memo or an inquiry email and gets:
-   - the extracted event facts (date, headcount, venue, event type, budget, requests), each
-     editable, plus questions for anything missing;
-   - quote lines priced from her **price sheet**, with amounts computed in code;
-   - a comparison panel with published prices and recent similar events from the watch log,
-     each with source link and date;
-   - a reply-email draft;
-   - a **.xlsx** download in the 스톤테이블 template.
-2. **Revisions.** She pastes the customer's change request and gets v2, v3… with a short "what
-   changed" list. Every version is kept. She can toggle SVC on any line and edit qty, price
-   and text by hand.
-3. **Price sheet (가격 기준표).** A settings table of items (1인 packages and 1회 fixed fees)
-   that she edits. It is seeded from the one real quote we have. It later feeds the 스톤테이블
-   website price list (separate project).
-4. **Competitor watch.** A daily cron reads a watch list she can edit (blogs via RSS, price
-   pages). It stores:
-   - **events**: who, where, when, menu, quantity, price if stated;
-   - **published prices**: package, per-person price, minimum, fees.
-   Every row carries `source_url` and `seen_at`. A "경쟁 업체" page lists both, filterable by
-   competitor.
-5. **Lead list as a side effect.** The event log shows which institutions buy catering and from
-   whom. For example, one hospital in 구리 appears in two competitors' posts. The page can filter
-   events by client/venue. This is useful even with few inquiries.
-6. **Her own quotes are price data.** Each quote can be marked 보냄 / 성사 / 무산. She can import
-   past quote Excels, which are parsed into lines she confirms and stored as imported quotes. The
-   comparison panel shows her own past quotes for similar events first.
+1. **붙여 넣은 문의로 견적 초안 만들기.** 통화 메모나 문의 메일을 붙여 넣으면 다음이 나온다.
+   - 뽑아낸 행사 정보(날짜, 인원, 장소, 행사 성격, 예산, 요청 사항). 모두 고칠 수 있고, 빠진 정보는
+     질문으로 보여 준다.
+   - **가격 기준표**로 단가를 매긴 견적 줄. 금액은 코드가 계산한다.
+   - 비교 칸: 감시 기록의 공개 가격과 최근 비슷한 행사. 줄마다 출처 링크와 날짜가 붙는다.
+   - 회신 메일 초안.
+   - 스톤테이블 양식의 **.xlsx** 파일 받기.
+2. **수정.** 손님의 수정 요청을 붙여 넣으면 v2, v3… 이 나오고, 짧은 "바뀐 점" 목록이 붙는다. 모든
+   버전을 남긴다. 어느 줄이든 SVC를 켤 수 있고, 수량·단가·문구를 직접 고칠 수 있다.
+3. **가격 기준표.** 설정 화면에서 사장님이 고치는 항목 표다(1인 기준 패키지, 1회 기준 고정비). 처음
+   값은 지금 가진 실제 견적 1건에서 가져온다. 나중에 스톤테이블 웹사이트 가격표로도 쓴다(별도 프로젝트).
+4. **경쟁 업체 감시.** 매일 한 번 크론이 사장님이 고칠 수 있는 감시 목록(블로그 RSS, 가격 페이지)을
+   읽고 다음을 저장한다.
+   - **행사 소식**: 누가, 어디서, 언제, 메뉴, 수량, 적혀 있으면 가격.
+   - **공개 가격**: 패키지, 1인 단가, 최소 주문, 추가 비용.
+   모든 줄에 `source_url`과 `seen_at`이 붙는다. "경쟁 업체" 화면에서 둘 다 보고 업체별로 거를 수 있다.
+5. **덤으로 생기는 영업 대상 목록.** 행사 기록을 보면 어느 기관이 누구에게서 케이터링을 사는지 보인다.
+   예를 들어 구리의 한 병원이 두 경쟁 업체 글에 다 나온다. 화면에서 고객·장소로 거를 수 있다. 문의가
+   적어도 쓸모가 있다.
+6. **사장님 견적도 가격 자료다.** 견적마다 보냄 / 성사 / 무산을 표시할 수 있다. 지난 견적 엑셀을
+   올리면 줄 단위로 읽어 사장님 확인을 받고 "가져온 견적"으로 저장한다. 비교 칸은 비슷한 행사의
+   사장님 지난 견적을 맨 위에 보여 준다.
 
-## 3. Non-goals
+## 3. 하지 않는 것
 
-- Sending anything to customers. She copies the email and attaches the Excel herself.
-- Guessing a competitor's unpublished price for an event.
-- Instagram, 숨고 and smart-store scraping, and OCR of image-only price cards (v1).
-- A per-quote live web search (v1). This could become a "더 찾아보기" button later, using
-  `web_search_20260209` with `allowed_domains`.
-- Kakao alerts for quotes or competitor news (v1). A weekly digest is a possible later add.
-- Setting-reference photos inside the Excel (v1). Her current template has a photo area; v1 leaves
-  it out.
-- Cafe (스톤브릿지) features. This is the catering business only.
+- 손님에게 무엇이든 보내기. 메일은 사장님이 복사하고 엑셀도 직접 첨부한다.
+- 경쟁 업체가 공개하지 않은 행사 가격 추측.
+- 인스타그램·숨고·스마트스토어 긁어오기, 이미지로만 된 가격표 글자 인식 (v1).
+- 견적마다 실시간 웹 검색 (v1). 나중에 "더 찾아보기" 버튼으로 붙일 수 있다
+  (`web_search_20260209` + `allowed_domains`).
+- 견적이나 경쟁 업체 소식 카톡 알림 (v1). 주간 요약은 나중 후보.
+- 엑셀 안의 세팅 참고 사진 (v1). 지금 양식에 사진 자리가 있지만 v1에서는 뺀다.
+- 카페(스톤브릿지) 기능. 이 문서는 케이터링 사업만 다룬다.
 
-## 4. Anti-goals (works, but still a failure)
+## 4. 실패로 치는 것 (동작해도 실패)
 
-- The AI invents a unit price, a fee, or a competitor fact. Prices come only from the price sheet
-  or her own edits. Competitor numbers come only from stored rows with a source link.
-- A competitor number shown without its source and date.
-- Totals that don't add up. Amounts, subtotal and VAT come from code, and the Excel holds live
-  formulas.
-- Her customer data or prices in the public repo.
-- The quote flow breaks when the watch is empty or failing. The comparison panel just says
-  there's nothing yet.
+- AI가 단가, 추가 비용, 경쟁 업체 사실을 지어낸다. 가격은 가격 기준표나 사장님이 직접 고친 값에서만
+  나온다. 경쟁 업체 숫자는 출처 링크가 있는 저장된 줄에서만 나온다.
+- 출처와 날짜 없이 경쟁 업체 숫자를 보여 준다.
+- 합계가 안 맞는다. 금액, 공급금액, VAT는 코드가 계산하고, 엑셀에는 살아 있는 수식이 들어간다.
+- 손님 정보나 가격이 공개 저장소에 들어간다.
+- 감시 기록이 비었거나 감시가 실패해서 견적 만들기가 막힌다. 그럴 때 비교 칸은 "아직 자료 없음"이라고만
+  보여 준다.
 
-## 5. Constraints
+## 5. 제약
 
-- Same app as the promo agent: Cloudflare Worker `stonebridge-promo` (React Router, D1, R2,
-  Workflows), same owner login, Claude API with `claude-opus-5-5` and the same refusal-fallback
-  setup as generation.
-- Repo is public until the challenge ends (11/16) and goes private after. Treat it as public.
-- Deploy order: remote D1 migrations **before** `npm run deploy` (docs/deploy-checklist.md).
-- She uses a phone for most things, but quotes and Excel are likely done on a PC. Every page must
-  work on both (builder's call; not confirmed).
-- **Unverified runtime assumptions.** These are the first task of the plan:
-  1. Fetching Naver blog RSS and `PostView` pages from a deployed Worker. Naver may block
-     Cloudflare egress IPs; the research fetched from a local machine. Fallback: pass the URLs to
-     Claude with the server-side `web_fetch_20260209` tool.
-  2. Decoding cp949/EUC-KR pages (one competitor site) with `TextDecoder("euc-kr")` in workerd.
-  3. Generating (and, for import, reading) .xlsx inside the Worker: no fs, bundle size limits.
-     A SheetJS-class library is expected to work; stream/fs-based ones may not.
+- 홍보글 에이전트와 같은 앱이다: Cloudflare Worker `stonebridge-promo`(React Router, D1, R2,
+  Workflows), 같은 사장님 로그인, Claude API `claude-opus-5-5`, 홍보글 생성과 같은 거절 시 대체 모델 설정.
+- 저장소는 챌린지가 끝나는 11/16까지 공개이고 그 뒤 비공개로 돌린다. 공개 저장소로 여긴다.
+- 배포 순서: 원격 D1 마이그레이션을 **먼저** 적용하고 `npm run deploy` (docs/deploy-checklist.md).
+- 사장님은 대부분 휴대폰을 쓰지만 견적과 엑셀은 PC에서 할 가능성이 높다. 모든 화면이 둘 다에서 돼야
+  한다 (만드는 사람 판단, 확인 안 됨).
+- **확인 안 된 실행 환경 가정.** 계획의 첫 작업으로 확인한다.
+  1. 배포된 Worker에서 네이버 블로그 RSS와 `PostView` 페이지를 가져올 수 있는지. 네이버가 Cloudflare
+     IP를 막을 수 있다. 조사는 로컬 컴퓨터에서 했다. 대안: URL을 Claude 서버 쪽 `web_fetch_20260209`
+     도구로 넘긴다.
+  2. 한 경쟁 업체 사이트의 cp949/EUC-KR 페이지를 workerd의 `TextDecoder("euc-kr")`로 읽을 수 있는지.
+  3. Worker 안에서 .xlsx 만들기(가져오기에서는 읽기). 파일 시스템이 없고 번들 크기 제한이 있다.
+     SheetJS 계열은 될 것으로 보고, 스트림·파일 시스템 기반 라이브러리는 안 될 수 있다.
 
-## 6. Decided
+## 6. 정한 것
 
-### 6.1 Screens
+### 6.1 화면
 
-- New top-level menu **견적** next to 홍보글 (owner layout).
-- **견적 목록**: customer/event, date, headcount, total, status (초안/보냄/성사/무산), version.
-- **새 견적**: one large textarea ("통화 메모나 문의 메일을 붙여 넣으세요") and a 만들기 button.
-- **견적 상세** (one version at a time, with a version switcher):
-  1. 행사 정보: editable fields, plus "확인할 것" questions the AI raised (e.g. 예산, 음료 여부).
-  2. 견적 표: lines with 항목 · 내용 · 수량 · 단가 · 금액 · 메뉴 · 비고. Each line has an SVC
-     toggle and can be edited, deleted, or added (pick from price sheet or free line). Lines
-     whose item is not on the price sheet show an empty price and a "가격 기준표에 없음" mark.
-     Subtotal and VAT 10% total are live.
-  3. 비교: her own similar past quotes first, then competitor published packages near the same
-     per-person level, then recent competitor events of the same type. Every row links to its
-     source and shows `seen_at`. The AI writes 2–3 sentences of takeaway, citing row ids only.
-  4. 회신 메일: subject + body with a copy button.
-  5. Buttons: 엑셀 받기, 수정 요청 붙여넣기 (→ next version), 상태 바꾸기.
-  6. **Per-quote sender and VAT** (my call): 발신 block and a "VAT 10% 별도" switch are stored
-     on each quote, defaulting from settings. Jobs referred through 드호/the academy can go out
-     under another name, and VAT/사업자번호 can be turned off until 스톤테이블 is registered.
-     With VAT off, the total row is just 공급금액 and the Excel has no ×1.1 formula.
-- **경쟁 업체** page with tabs:
-  - 소식 (event log, newest first, filter by competitor / client text);
-  - 가격 (published packages, latest per package, with history);
-  - 감시 목록 (watch-list editor: name, kind `rss` | `page`, URL, memo, on/off, last run result).
+- 사장님 화면 위쪽 메뉴에 홍보글 옆으로 **견적** 메뉴를 새로 둔다.
+- **견적 목록**: 고객·행사, 날짜, 인원, 합계, 상태(초안/보냄/성사/무산), 버전.
+- **새 견적**: 큰 입력 칸 하나("통화 메모나 문의 메일을 붙여 넣으세요")와 만들기 버튼.
+- **견적 상세** (한 번에 한 버전, 버전 바꾸기 있음):
+  1. 행사 정보: 고칠 수 있는 칸들과 AI가 남긴 "확인할 것" 질문(예: 예산, 음료 여부).
+  2. 견적 표: 항목 · 내용 · 수량 · 단가 · 금액 · 메뉴 · 비고. 줄마다 SVC 스위치가 있고, 고치기·지우기·
+     추가(가격 기준표에서 고르거나 직접 입력)가 된다. 가격 기준표에 없는 항목의 줄은 단가가 비어 있고
+     "가격 기준표에 없음" 표시가 붙는다. 공급금액과 VAT 10% 포함 합계가 바로바로 바뀐다.
+  3. 비교: 사장님의 비슷한 지난 견적이 먼저, 그다음 1인 단가가 비슷한 경쟁 업체 공개 패키지, 그다음
+     같은 종류의 최근 경쟁 업체 행사. 줄마다 출처 링크와 `seen_at`이 있다. AI가 2~3문장 요약을 쓰고,
+     근거는 줄 id로만 단다.
+  4. 회신 메일: 제목과 본문, 복사 버튼.
+  5. 버튼: 엑셀 받기, 수정 요청 붙여넣기(다음 버전), 상태 바꾸기.
+  6. **견적마다 발신 정보와 VAT** (내 판단): 발신 정보와 "VAT 10% 별도" 스위치를 견적마다 저장하고,
+     기본값은 설정에서 가져온다. 드호나 학원이 소개한 일은 다른 이름으로 보낼 수 있고, 스톤테이블
+     등록 전에는 VAT와 사업자번호를 끌 수 있다. VAT를 끄면 합계 줄은 공급금액만 나오고 엑셀에도
+     ×1.1 수식이 없다.
+- **경쟁 업체** 화면, 탭 세 개:
+  - 소식: 행사 기록, 최신순, 업체나 고객 글자로 거르기.
+  - 가격: 공개 패키지, 패키지마다 최신 값과 이력.
+  - 감시 목록: 이름, 종류(`rss` | `page`), URL, 메모, 켜기/끄기, 마지막 실행 결과를 고치는 곳.
 - **설정 → 견적**:
-  - price sheet editor;
-  - sender block (업체명 default "스톤테이블", 담당자, 전화, 메일, 결제, 사업자번호 — empty until
-    registration);
-  - intro paragraph;
-  - fixed "기본 제공 사항" lines.
-  Fixed text is pasted by code, never written by the AI (same rule as the promo footers).
+  - 가격 기준표 편집;
+  - 발신 정보(업체명 기본값 "스톤테이블", 담당자, 전화, 메일, 결제, 사업자번호 — 등록 전에는 비움);
+  - 소개 문구;
+  - "기본 제공 사항" 고정 문구.
+  고정 문구는 코드가 붙인다. AI가 쓰지 않는다(홍보글 꼬리말과 같은 규칙).
 
-### 6.2 Quote generation
+### 6.2 견적 만들기
 
-- One Claude call per version, run in a Cloudflare Workflow like post generation (owner can leave
-  the page). Structured output, roughly:
-  `{ event: {...fields, missing: string[]}, lines: [{ itemId|null, label, content, qty, menu, note }], comparison: { notes: string, citedIds: string[] }, email: { subject, body }, changes?: string[] }`.
-- Input: pasted text (+ previous version and change request for v2+), the price sheet (ids,
-  names, units, prices), the comparison candidates (pre-selected by code: her quotes and
-  competitor rows, filtered by event type keyword and per-person band, capped at ~30), fixed
-  rules. Prompt rules:
-  - Use only price-sheet `itemId`s for prices.
-  - Never output amounts. Code computes `qty × unit price`, the subtotal, and ×1.1.
-  - Suggest SVC only as a note; she decides.
-  - Ask instead of assuming when headcount or date is missing.
-  - The email is polite and short. Don't invent policies (same rule as promo drafts).
-- Code validates: unknown `itemId` → null (price blank); `citedIds` filtered to the ids actually
-  sent.
-- **Stored line** (what `linesJson` holds, builder's call made explicit): `{ itemId|null, label,
-  content, qty, unitPrice|null, priceSource: 'sheet' | 'hand' | 'imported', svc: boolean, menu,
-  note }`. `unitPrice` is copied from the sheet when the version is created (later sheet edits
-  don't rewrite old quotes).
-- **Hand edits and revisions** (my call): she edits the current version in place, and those
-  edits are saved straight away. A version is never regenerated in place. "수정 요청 붙여넣기"
-  creates v(n+1). The model gets the previous lines with their prices and SVC flags. For each
-  line it outputs `prevIndex` (the line it keeps or changes) or null for a new line. Code then
-  copies `unitPrice`/`priceSource`/`svc` from the referenced line whenever that line had a hand
-  price or SVC, so negotiated prices and SVC choices survive revisions. The model may suggest
-  dropping SVC only as a note. The "what changed" list is computed by code from the line diff,
-  plus the model's one-line summary of the request.
-- Effort: start at `medium`; the builder measures time and cost on 3–4 test inquiries.
+- 버전마다 Claude 호출 한 번. 홍보글 생성처럼 Cloudflare Workflow에서 돌린다(사장님이 화면을 떠나도
+  된다). 구조화된 출력, 대략:
+  `{ event: {...칸들, missing: string[]}, lines: [{ itemId|null, label, content, qty, menu, note, prevIndex|null }], comparison: { notes: string, citedIds: string[] }, email: { subject, body }, changes?: string[] }`.
+- 입력: 붙여 넣은 글(v2부터는 이전 버전과 수정 요청도), 가격 기준표(id, 이름, 단위, 단가), 비교 후보
+  (코드가 미리 고른다: 사장님 견적과 경쟁 업체 줄을 행사 종류 키워드와 1인 단가 범위로 걸러 30개
+  정도까지), 고정 규칙. 프롬프트 규칙:
+  - 가격은 가격 기준표의 `itemId`로만 정한다.
+  - 금액은 출력하지 않는다. `수량 × 단가`, 공급금액, ×1.1은 코드가 계산한다.
+  - SVC는 비고로 제안만 한다. 정하는 건 사장님이다.
+  - 인원이나 날짜가 없으면 짐작하지 말고 질문으로 남긴다.
+  - 메일은 정중하고 짧게. 운영 방식을 지어내지 않는다(홍보글과 같은 규칙).
+- 코드 검사: 모르는 `itemId`는 null로(단가 빈칸), `citedIds`는 실제로 보낸 id만 남긴다.
+- **저장되는 줄** (`linesJson`, 만드는 사람 판단을 명시): `{ itemId|null, label, content, qty,
+  unitPrice|null, priceSource: 'sheet' | 'hand' | 'imported', svc: boolean, menu, note }`.
+  `unitPrice`는 버전을 만들 때 가격 기준표에서 복사한다(나중에 기준표를 고쳐도 지난 견적은 안 바뀐다).
+- **직접 고친 값과 수정 버전** (내 판단): 사장님은 현재 버전을 그 자리에서 고치고, 고친 값은 바로
+  저장된다. 한 버전을 다시 생성해 덮어쓰는 일은 없다. "수정 요청 붙여넣기"는 v(n+1)을 만든다.
+  모델은 이전 줄들을 단가와 SVC 표시와 함께 받고, 줄마다 `prevIndex`(그대로 두거나 고친 이전 줄)나
+  새 줄이면 null을 낸다. 참조한 이전 줄에 직접 고친 단가나 SVC가 있으면 코드가 `unitPrice`·
+  `priceSource`·`svc`를 그대로 옮긴다. 그래서 협의한 가격과 SVC가 수정을 거쳐도 남는다. SVC를 빼자는
+  건 모델이 비고로만 제안할 수 있다. "바뀐 점" 목록은 코드가 줄 비교로 만들고, 수정 요청 한 줄 요약은
+  모델이 쓴다.
+- effort: `medium`으로 시작한다. 만드는 사람이 시험 문의 3~4개로 시간과 비용을 잰다.
 
-### 6.3 Excel
+### 6.3 엑셀
 
-- Layout follows her current quote (notes in `private/`, not in git):
-  1. title;
-  2. 수신 block (고객사, 담당자, 연락처, 행사 성격, 장소, 특이사항) and 발신 block from settings;
-  3. intro paragraph;
-  4. line table;
+- 지금 쓰는 견적서 틀을 따른다(분석 메모는 `private/`에 있고 git에는 없다):
+  1. 제목;
+  2. 수신 정보(고객사, 담당자, 연락처, 행사 성격, 장소, 특이사항)와 견적의 발신 정보;
+  3. 소개 문구;
+  4. 견적 표;
   5. 공급금액 / 합계(VAT 10% 포함) / 사업자번호;
   6. 기본 제공 사항.
-- Live formulas: `금액 = 수량 × 단가`, `공급금액 = SUM`, `합계 = 공급금액 × 1.1`. SVC lines keep
-  the 단가 and show "SVC" in 금액 (excluded from the sum).
-- File name: `스톤테이블_견적서_<고객>_<YYMMDD>_v<n>.xlsx`.
+- 살아 있는 수식: `금액 = 수량 × 단가`, `공급금액 = SUM`, `합계 = 공급금액 × 1.1`. SVC 줄은 단가를
+  그대로 두고 금액 칸에 "SVC"를 쓴다(합계에서 빠진다).
+- 파일 이름: `스톤테이블_견적서_<고객>_<YYMMDD>_v<n>.xlsx`.
 
-### 6.4 Competitor watch
+### 6.4 경쟁 업체 감시
 
-- Cron once a day (night KST; add to `triggers.crons` and the CRONS list in code).
-- `rss` sources: read the feed and take items newer than the source's last seen item (cap 10 per
-  source per run). For each new post, fetch the post text and run one low-effort Claude
-  extraction:
-  - fields: `{ isEvent, date, client, venue, eventType, menu[], quantity, headcount, price, notes }`;
-  - store only if `isEvent`; unknown fields stay null and are never guessed.
-- `page` sources (price pages): fetch weekly. If the page text hash changed, extract
-  `{ packages: [{ name, perPerson, items[], minimum, fees[] }] }`. Store a new price row only
-  when a value changed, so history stays visible.
-- Per-run cap on Claude calls (default 30) and a per-source last-run status/error shown on the
-  감시 목록 tab. Failures never block quotes.
-- Seed watch list (entered via the app or the private seed script, not committed): 드호 plus
-  4–5 peers found in the research (blog RSS + price pages), owner to confirm.
+- 크론 하루 한 번 (한국 시간 밤; `triggers.crons`와 코드의 CRONS 목록에 같이 추가).
+- `rss` 출처: 피드를 읽고 마지막으로 본 글보다 새 글만 가져온다(출처당 한 번에 10개까지). 새 글마다
+  본문을 가져와 low effort Claude 추출을 한 번 돌린다.
+  - 칸: `{ isEvent, date, client, venue, eventType, menu[], quantity, headcount, price, notes }`;
+  - `isEvent`일 때만 저장한다. 모르는 칸은 null로 두고 절대 짐작하지 않는다.
+- `page` 출처(가격 페이지): 일주일에 한 번 가져온다. 페이지 글자의 해시가 바뀌었으면
+  `{ packages: [{ name, perPerson, items[], minimum, fees[] }] }`를 뽑는다. 값이 바뀐 경우에만 새 가격
+  줄을 저장해서 이력이 보이게 한다.
+- 한 번 실행당 Claude 호출 상한(기본 30). 출처마다 마지막 실행 상태와 오류를 감시 목록 탭에 보여 준다.
+  감시가 실패해도 견적은 막히지 않는다.
+- 처음 감시 목록(앱에서 넣거나 비공개 스크립트로 넣고, 커밋하지 않는다): 드호와 조사에서 찾은 비슷한
+  업체 4~5곳(블로그 RSS + 가격 페이지). 사장님 확인 필요.
 
-### 6.5 Importing past quotes
+### 6.5 지난 견적 가져오기
 
-- Upload .xlsx. The server converts the cells to text, and the same extraction as 6.2 runs with
-  "this is a finished quote, copy it, don't price it": lines keep the prices written in the
-  file.
-- She confirms. The quote is stored with `source = imported` and status 성사/무산/보냄 as she
-  marks it.
+- .xlsx를 올리면 서버가 셀을 글자로 바꾸고, 6.2와 같은 추출을 "이미 완성된 견적이니 그대로 옮기고
+  가격을 매기지 말 것"으로 돌린다. 줄의 단가는 파일에 적힌 값을 쓴다.
+- 사장님이 확인하면 `source = imported`로 저장하고, 상태는 사장님이 고른 성사/무산/보냄으로 둔다.
 
-### 6.6 Data (D1, new tables)
+### 6.6 데이터 (D1 새 표)
 
-- `price_items`: id, kind (`per_person` | `per_event`), name, content, unit, unitPrice (nullable,
-  공급가 = VAT 별도, as in her quote), minimumQty (nullable), menu, note, needsConfirm, enabled,
-  sort. Headcount tiers and distance-based fees are out of v1 (my call). She adjusts per quote,
-  and the note field holds the rule in words. `needsConfirm` marks seeded prices she hasn't
-  confirmed yet; the editor shows them highlighted.
-- `quotes`: id, customer (name/contact/email), event fields, senderJson, vatIncluded, status,
-  source (`app` | `imported`), createdAt.
+- `price_items`: id, kind(`per_person` | `per_event`), name, content, unit, unitPrice(빈값 가능,
+  공급가 = VAT 별도, 지금 견적과 같음), minimumQty(빈값 가능), menu, note, needsConfirm, enabled, sort.
+  인원 구간별 가격과 거리별 비용은 v1에서 뺀다(내 판단). 사장님이 견적마다 고치고, 규칙은 비고에
+  말로 적는다. `needsConfirm`은 처음 넣은 값 중 사장님이 아직 확인하지 않은 단가 표시이고, 편집
+  화면에서 강조해 보여 준다.
+- `quotes`: id, 고객(이름/연락처/메일), 행사 칸들, senderJson, vatIncluded, status,
+  source(`app` | `imported`), createdAt.
 - `quote_versions`: quoteId, version, inputText, changeRequest, eventJson, linesJson,
-  comparisonJson, emailSubject, emailBody, workflow fields (same claim/stale pattern as posts),
-  tokens, createdAt.
+  comparisonJson, emailSubject, emailBody, Workflow 칸들(홍보글과 같은 claim/stale 방식), 토큰,
+  createdAt.
 - `watch_sources`: id, name, kind, url, memo, enabled, lastSeenKey, lastRunAt, lastStatus,
   lastError, contentHash.
-- `competitor_events`: id, sourceId, sourceUrl (unique), date, client, venue, eventType,
-  menuJson, quantity, headcount, price, seenAt.
+- `competitor_events`: id, sourceId, sourceUrl(유일), date, client, venue, eventType, menuJson,
+  quantity, headcount, price, seenAt.
 - `competitor_prices`: id, sourceId, sourceUrl, packageName, perPerson, itemsJson, minimum,
   feesJson, seenAt.
-- Settings keys for the sender block, intro, fixed lines.
+- 발신 정보, 소개 문구, 고정 문구는 settings 키로.
 
-### 6.7 Rollout order (one plan, three shippable phases)
+### 6.7 만드는 순서 (계획 하나, 따로 배포할 수 있는 단계 셋)
 
-1. Risk spike (§5 items 1–3) on a deployed preview.
-2. Price sheet + settings + quote generation + Excel + revisions. Usable on its own.
-3. Competitor watch + comparison panel + 경쟁 업체 page.
-4. Past-quote import.
+1. 위험 확인(§5의 1~3)을 배포된 미리보기에서.
+2. 가격 기준표 + 설정 + 견적 만들기 + 엑셀 + 수정 버전. 이것만으로도 쓸 수 있다.
+3. 경쟁 업체 감시 + 비교 칸 + 경쟁 업체 화면.
+4. 지난 견적 가져오기.
 
-## 7. Cost estimate (to be measured)
+## 7. 비용 추정 (실제로 잴 것)
 
-- Quote version: one Opus 5.5 call, a few thousand input tokens + ~2k output → about
-  $0.05–0.10.
-- Watch: ~10 sources, ~5–15 new posts/day at low effort, ~3k tokens each → roughly $0.1–0.3/day
-  (≈ $3–9/month). The per-run cap bounds it. The builder records real numbers in the ledger.
+- 견적 한 버전: Opus 5.5 호출 한 번, 입력 수천 토큰 + 출력 약 2천 토큰 → 약 $0.05~0.10.
+- 감시: 출처 약 10곳, 하루 새 글 5~15개, low effort, 글당 약 3천 토큰 → 하루 약 $0.1~0.3
+  (월 약 $3~9). 실행당 상한으로 묶인다. 실제 숫자는 만드는 사람이 기록(ledger)에 남긴다.
 
-## 8. Left to the builder
+## 8. 만드는 사람에게 맡기는 것
 
-- Excel library choice (within the §5 constraint) and exact cell styling.
-- How comparison candidates are pre-selected (keyword/band heuristics).
-- Prompt wording, effort levels after measurement, Workflow step split.
-- UI details within the screens above; reuse the promo app's components and patterns.
+- 엑셀 라이브러리 선택(§5 제약 안에서)과 셀 꾸밈.
+- 비교 후보를 미리 고르는 방법(키워드, 단가 범위).
+- 프롬프트 문구, 측정 후 effort 수준, Workflow 단계 나누기.
+- 위 화면 안에서의 UI 세부. 홍보글 앱의 컴포넌트와 패턴을 다시 쓴다.
 
-## 9. Open questions for the owner (not blocking v1)
+## 9. 사장님께 물을 것 (v1을 막지 않음)
 
-- 드호: her quote went out with 드호 as 발신처 (academy-referred job). The 드호 we found
-  (강남 premium agency) publishes 25,000원+/인 packages, far above her level. Is that the same
-  드호, and is it a partner who passes jobs, a competitor, or both?
-- Which peers should be on the watch list (we'll propose 4–5)?
-- A past quote email she sent, so the reply draft matches her tone.
-- Are the seeded prices hers? The only quote went out under 드호's name. If 드호 added a
-  margin, 8,500원/인 is not her level. Seeded rows are marked `needsConfirm` until she checks
-  them.
-- Does she price by headcount tiers, minimum order or distance? v1 leaves these to per-quote
-  edits.
+- 드호: 사장님 견적의 발신처가 드호였다(학원 소개 건). 찾은 드호(강남 고급 대행사)는 1인 25,000원부터
+  공개해서 사장님 가격대보다 훨씬 높다. 같은 드호인지, 일을 넘겨주는 협력사인지 경쟁 업체인지 둘 다인지.
+- 감시 목록에 넣을 업체 (4~5곳을 제안할 예정).
+- 사장님이 보낸 견적 메일 하나. 회신 메일 초안을 사장님 말투에 맞추려고.
+- 처음 넣는 가격이 사장님 가격인지. 유일한 견적이 드호 이름으로 나갔다. 드호가 마진을 붙였다면
+  1인 8,500원은 사장님 가격대가 아니다. 처음 넣은 값은 사장님이 확인할 때까지 `needsConfirm`으로 둔다.
+- 인원 구간, 최소 주문, 거리에 따라 가격을 다르게 받는지. v1은 견적마다 직접 고치는 것으로 둔다.
