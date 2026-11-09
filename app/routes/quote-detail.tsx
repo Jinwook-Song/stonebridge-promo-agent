@@ -31,7 +31,7 @@ import {
   setStatus,
   setVat,
 } from "../quote/quotes.server";
-import { QUOTE_STATUSES, QUOTE_STATUS_LABELS, type QuoteEvent, type QuoteStatus, type Sender } from "../quote/types";
+import { QUOTE_STATUSES, QUOTE_STATUS_LABELS, type PriceKind, type QuoteEvent, type QuoteStatus, type Sender } from "../quote/types";
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
 import { cn } from "../lib/utils";
@@ -66,10 +66,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     throw e;
   }
   const ownIds = (view.version.comparison?.rows ?? []).map(ownQuoteId).filter((n) => n !== null);
-  const [sheet, liveQuoteIds] = await Promise.all([
-    listPriceItems(db, { enabledOnly: true }),
-    existingQuoteIds(db, ownIds),
-  ]);
+  const [items, liveQuoteIds] = await Promise.all([listPriceItems(db), existingQuoteIds(db, ownIds)]);
+  const sheet = items.filter((s) => s.enabled);
 
   const latest = view.versions.at(-1)!;
   const isLatest = view.version.version === latest.version;
@@ -90,6 +88,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       note: s.note,
     })),
     liveQuoteIds,
+    // Every item's kind, switched-off ones too: a line keeps its item after the item is switched off.
+    itemKinds: items.map((s) => [s.id, s.kind] as [number, PriceKind]),
     latestVersion: latest.version,
     latestStatus: latest.status,
     isLatest,
@@ -440,6 +440,7 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
           initialLines={lines}
           vatIncluded={vatIncluded}
           sheet={sheet}
+          itemKinds={loaded.itemKinds}
           readOnly={readOnly}
           onUnsavedChange={setLinesSync}
         />

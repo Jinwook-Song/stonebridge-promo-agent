@@ -6,6 +6,7 @@ import { action as detailAction, loader as detailLoader } from "../app/routes/qu
 import { action as newAction } from "../app/routes/quote-new";
 import { loader as layoutLoader, middleware } from "../app/routes/owner-layout";
 import { createQuote, deleteQuote, listQuotes } from "../app/quote/quotes.server";
+import { savePriceItem } from "../app/quote/price-sheet.server";
 import { getDb } from "../app/server/db";
 
 const db = getDb(env.DB);
@@ -175,5 +176,22 @@ describe("quote-detail loader", () => {
       context: {},
     } as never)) as { liveQuoteIds: number[] };
     expect(res.liveQuoteIds).toEqual([kept]);
+  });
+
+  it("gives the kind of switched-off price items too", async () => {
+    const off = await savePriceItem(
+      db,
+      { kind: "per_event", name: "꺼진 출장비", content: "", unit: "회", unitPrice: 1000, minimumQty: null, menu: "", note: "", needsConfirm: false, enabled: false, sort: 0 },
+      now,
+    );
+    const { quoteId } = await createQuote(db, { text: "문의", source: "app" }, now);
+    await db.update(quoteVersions).set({ status: "ready", linesJson: "[]" }).where(eq(quoteVersions.quoteId, quoteId));
+    const res = (await detailLoader({
+      request: new Request(`http://localhost/quotes/${quoteId}`),
+      params: { id: String(quoteId) },
+      context: {},
+    } as never)) as { itemKinds: [number, string][]; sheet: { id: number }[] };
+    expect(res.itemKinds).toContainEqual([off, "per_event"]);
+    expect(res.sheet.map((s) => s.id)).not.toContain(off);
   });
 });

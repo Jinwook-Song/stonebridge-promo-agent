@@ -70,6 +70,7 @@ export function LinesTable({
   initialLines,
   vatIncluded,
   sheet,
+  itemKinds,
   readOnly,
   onUnsavedChange,
   ref,
@@ -79,6 +80,8 @@ export function LinesTable({
   initialLines: QuoteLine[];
   vatIncluded: boolean;
   sheet: SheetChoice[];
+  /** [itemId, kind] of every price item, switched-off ones too (sheet holds only the enabled ones). */
+  itemKinds: [number, PriceKind][];
   readOnly: boolean;
   /** While the lines on screen are not what the server holds ("saving", or "failed" until retried) a download would be stale. */
   onUnsavedChange?: (state: SyncState) => void;
@@ -99,9 +102,11 @@ export function LinesTable({
   }
 
   useImperativeHandle(ref, () => ({
-    followHeadcount(from, to) {
+    followHeadcount(from, rawTo) {
+      // Clamped as the lines are, so the notice and 되돌리기 see the qty the lines got.
+      const to = rawTo === null ? null : Math.min(rawTo, MAX_QTY);
       if (readOnly || to === null || to <= 0 || to === from) return;
-      const kinds = new Map(sheet.map((s) => [s.id, s.kind]));
+      const kinds = new Map(itemKinds);
       const result = followHeadcount(lines, kinds, from, to);
       const moved = new Set(result.changed);
       const kept = lines.filter(

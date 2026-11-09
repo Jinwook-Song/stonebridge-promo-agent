@@ -106,7 +106,9 @@ export function EventForm({
             }}
             onBlur={() => {
               saver.save(event);
-              if (event.headcount !== lastHeadcount.current) {
+              // A cleared box is a step on the way to another number: the lines keep following
+              // the last real headcount, so 50 → (empty) → 60 still moves the 50s.
+              if (event.headcount !== null && event.headcount > 0 && event.headcount !== lastHeadcount.current) {
                 const from = lastHeadcount.current;
                 lastHeadcount.current = event.headcount;
                 onHeadcountChange?.(from, event.headcount);
