@@ -21,7 +21,9 @@
 		// while it is an `example` host, generation fails at once with an admin message
 		// (docs/deploy-checklist.md).
 		// Local dev: http://localhost:5173 (not https, so photos go to Claude as base64).
-		"PUBLIC_ORIGIN": "https://stonebridge-promo.wlsdnr129.workers.dev",
+		// The pages.dev front (edge/), reached from Korea via Seoul. Requests on the workers.dev host
+		// are 308-redirected here (app/server/canonical-host.ts).
+		"PUBLIC_ORIGIN": "https://stonebridge-promo.pages.dev",
 		// "1" = canned drafts instead of calling Claude. Local dev only.
 		"FAKE_CLAUDE": "0"
 	},

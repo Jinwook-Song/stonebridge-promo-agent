@@ -1,0 +1,15 @@
+// Front door for Korea. *.pages.dev is announced at Cloudflare's Seoul (ICN) edge, while
+// *.workers.dev reaches Korean users through LAX (~1s per page). This Pages project only forwards
+// every request to the stonebridge-promo Worker over a service binding, so the Worker runs at ICN
+// too. Measured 2026-11-09: pages 1–10s → 0.06–0.24s. Not an SLA; workers.dev stays the fallback.
+//
+// Deploy: `npm run deploy` (or `npm run deploy:edge`). The script first writes
+// edge/.wrangler/deploy/config.json pointing here; without it wrangler finds the Worker build's
+// .wrangler/deploy/config.json one level up and refuses (or deploys the wrong config). This file is
+// .jsonc, not .toml, because wrangler looks for wrangler.jsonc in every parent before any .toml.
+{
+	"name": "stonebridge-promo",
+	"pages_build_output_dir": "./public",
+	"compatibility_date": "2026-11-01",
+	"services": [{ "binding": "APP", "service": "stonebridge-promo" }]
+}
