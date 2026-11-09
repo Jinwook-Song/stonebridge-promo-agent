@@ -56,6 +56,8 @@
 
 ## 견적 에이전트 (2026-11-09 배포)
 
+순서: 원격 마이그레이션 → 비공개 시드 → npm run deploy
+
 - [ ] **새 Workflow 바인딩**: `wrangler.jsonc`의 `QUOTE_GENERATE` (`quote-generate`, `QuoteGenerateWorkflow`). `npm run deploy`가 같이 만든다. 배포 결과의 Bindings 목록에 `env.QUOTE_GENERATE`가 보이는지 확인한다.
 - [ ] **호환 플래그**: `nodejs_compat` (엑셀 `exceljs`가 필요로 한다). `nodejs_als`를 포함한다.
 - [ ] **마이그레이션 `0004_quote_agent.sql`** (표 6개 추가: `quotes`, `quote_versions`, `price_items`, `competitor_events`, `competitor_prices`, `watch_sources`). 배포 전에 먼저 `npx wrangler d1 migrations apply promo-agent --remote`. 추가만 하는 마이그레이션이라 기존 화면은 영향이 없다.

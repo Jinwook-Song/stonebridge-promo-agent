@@ -23,7 +23,11 @@ export type QuoteSource = (typeof QUOTE_SOURCES)[number];
 export const VERSION_STATUSES = ["generating", "ready", "failed"] as const;
 export type VersionStatus = (typeof VERSION_STATUSES)[number];
 
-/** Amounts are whole won; `unitPrice` is the supply price (VAT excluded). null = not on the price sheet. */
+/**
+ * Amounts are whole won; `unitPrice` is the supply price (VAT excluded). null = not on the price sheet.
+ * `note` goes to the customer (Excel 비고). `tip` is the AI's advice for the owner only: shown in the
+ * app, never in the Excel file or the next version's prompt. Older stored lines have no tip.
+ */
 export type QuoteLine = {
   itemId: number | null;
   label: string;
@@ -34,6 +38,7 @@ export type QuoteLine = {
   svc: boolean;
   menu: string;
   note: string;
+  tip?: string;
 };
 
 /** Unknown string fields are "". */
@@ -86,6 +91,8 @@ export const QuoteLineSchema = z.object({
   svc: z.boolean(),
   menu: z.string(),
   note: z.string(),
+  // No max: a long tip from the model must not make the whole version unreadable.
+  tip: z.string().default(""),
 });
 
 export const QuoteEventSchema = z.object({

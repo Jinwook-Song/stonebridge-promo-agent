@@ -11,7 +11,10 @@ export type ModelLine = {
   content: string;
   qty: number;
   menu: string;
+  /** Printed for the customer. */
   note: string;
+  /** For the owner only. */
+  tip: string;
   /** Index into the previous version's lines this line continues, or null for a new line. */
   prevIndex: number | null;
 };
@@ -52,6 +55,7 @@ function cleanQty(qty: number): number {
  *    keeps that line's itemId, price, price source and SVC flag (hand-set values survive revisions).
  * 2. Otherwise an enabled sheet item with a price gets the sheet price.
  * 3. Otherwise the line is a hand line with no price, for the owner to fill in.
+ * The tip is always the model's new one: tips are advice for this version, not agreed values.
  */
 export function buildLines(
   model: ModelLine[],
@@ -68,6 +72,7 @@ export function buildLines(
       qty: cleanQty(m.qty),
       menu: m.menu,
       note: m.note,
+      tip: m.tip,
     };
 
     const index = m.prevIndex;
@@ -105,7 +110,7 @@ export function buildLines(
 
 const won = (n: number | null) => (n === null ? "없음" : n.toLocaleString("ko-KR"));
 
-/** Lines are matched by itemId (label when there is none); repeats pair up in order. */
+/** Lines are matched by itemId (label when there is none); repeats pair up in order. Tips are not compared. */
 export function diffLines(prev: QuoteLine[], next: QuoteLine[]): string[] {
   const keyed = (lines: QuoteLine[]) => {
     const seen = new Map<string, number>();

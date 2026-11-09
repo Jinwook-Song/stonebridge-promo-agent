@@ -103,6 +103,13 @@ describe("buildQuoteXlsx", () => {
     expect(col(none, 4).text).toBe("단가 없음");
   });
 
+  it("prints the note in 비고 but never the owner-only tip", async () => {
+    const withTip = [line({ label: "다과", note: "1인 기준", tip: "SVC 제안 테스트" }), ...lines.slice(1)];
+    const ws = await read(await buildQuoteXlsx({ ...base, lines: withTip }));
+    expect(ws.getCell(find(ws, "다과").row, 7).value).toBe("1인 기준");
+    expect(allText(ws)).not.toContain("SVC 제안 테스트");
+  });
+
   it("sums the whole amount column and matches computeTotals", async () => {
     const ws = await read(await buildQuoteXlsx(base));
     const totals = computeTotals(lines, true);

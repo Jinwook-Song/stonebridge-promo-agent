@@ -76,7 +76,7 @@ describe("quote-detail action", () => {
     const res = await runDetail(quoteId, { intent: "saveLines", version: "1", lines: JSON.stringify([goodLine]) });
     expect(res.ok).toBe(true);
     const [row] = await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, quoteId));
-    expect(JSON.parse(row.linesJson!)).toEqual([goodLine]);
+    expect(JSON.parse(row.linesJson!)).toEqual([{ ...goodLine, tip: "" }]);
   });
 
   it("rejects a headcount that is not a number", async () => {

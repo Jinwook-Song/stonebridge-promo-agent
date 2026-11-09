@@ -218,7 +218,7 @@ export function makeFakeClaudeCalls(): ClaudeCalls {
         prev.length > 0
           ? prev.map((raw, index) => {
               const l = raw as { itemId: number | null; label: string; content: string; qty: number; menu: string; note: string };
-              return { itemId: l.itemId, label: l.label, content: l.content, qty: l.qty, menu: l.menu, note: l.note, prevIndex: index };
+              return { itemId: l.itemId, label: l.label, content: l.content, qty: l.qty, menu: l.menu, note: l.note, tip: "", prevIndex: index };
             })
           : [
               {
@@ -228,6 +228,7 @@ export function makeFakeClaudeCalls(): ClaudeCalls {
                 qty: 10,
                 menu: "",
                 note: "",
+                tip: "테스트 제안 (사장님만 봐요)",
                 prevIndex: null,
               },
             ];

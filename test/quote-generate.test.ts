@@ -67,8 +67,8 @@ function output(over: Partial<QuoteOutput> = {}): QuoteOutput {
   return {
     event: EVENT,
     lines: [
-      { itemId: snackId, label: "다과 세트", content: "쿠키 2종", qty: 40, menu: "", note: "", prevIndex: null },
-      { itemId: coffeeId, label: "커피", content: "", qty: 40, menu: "", note: "", prevIndex: null },
+      { itemId: snackId, label: "다과 세트", content: "쿠키 2종", qty: 40, menu: "", note: "", tip: "", prevIndex: null },
+      { itemId: coffeeId, label: "커피", content: "", qty: 40, menu: "", note: "", tip: "", prevIndex: null },
     ],
     comparison: { notes: "비슷한 행사 가격대예요.", citedIds: [`p${priceRowId}`, "p999"] },
     email: { subject: "견적 보내드려요", body: "안녕하세요. 견적서 보내드려요." },
@@ -190,8 +190,8 @@ describe("createQuote → startQuoteGeneration → runQuoteGeneration → getQuo
     });
     expect(view.version.event).toEqual(EVENT);
     expect(view.version.lines).toEqual([
-      { itemId: snackId, label: "다과 세트", content: "쿠키 2종", qty: 40, unitPrice: 8500, priceSource: "sheet", svc: false, menu: "", note: "" },
-      { itemId: coffeeId, label: "커피", content: "", qty: 40, unitPrice: 3000, priceSource: "sheet", svc: false, menu: "", note: "" },
+      { itemId: snackId, label: "다과 세트", content: "쿠키 2종", qty: 40, unitPrice: 8500, priceSource: "sheet", svc: false, menu: "", note: "", tip: "" },
+      { itemId: coffeeId, label: "커피", content: "", qty: 40, unitPrice: 3000, priceSource: "sheet", svc: false, menu: "", note: "", tip: "" },
     ]);
     expect(view.versions).toEqual([{ version: 1, status: "ready", createdAt: T0.toISOString() }]);
   });
@@ -220,7 +220,7 @@ describe("createQuote → startQuoteGeneration → runQuoteGeneration → getQuo
   it("an unknown itemId becomes a line without a price, not a made-up one", async () => {
     const { quoteId } = await createQuote(db, { text: "다과 견적", source: "app" }, T0);
     const out = output({
-      lines: [{ itemId: 999_999, label: "꽃 장식", content: "", qty: 1, menu: "", note: "", prevIndex: null }],
+      lines: [{ itemId: 999_999, label: "꽃 장식", content: "", qty: 1, menu: "", note: "", tip: "", prevIndex: null }],
     });
     await startAndRun(quoteId, 1, deps({ quote: async () => ({ output: out, inputTokens: 1, outputTokens: 1 }) }));
     const [line] = (await getQuote(db, quoteId)).version.lines!;
@@ -264,8 +264,8 @@ describe("requestRevision", () => {
       output: output({
         event: { ...EVENT, headcount: 50 },
         lines: [
-          { itemId: snackId, label: "다과 세트", content: "쿠키 2종", qty: 50, menu: "", note: "", prevIndex: 0 },
-          { itemId: coffeeId, label: "커피", content: "", qty: 50, menu: "", note: "", prevIndex: 1 },
+          { itemId: snackId, label: "다과 세트", content: "쿠키 2종", qty: 50, menu: "", note: "", tip: "", prevIndex: 0 },
+          { itemId: coffeeId, label: "커피", content: "", qty: 50, menu: "", note: "", tip: "", prevIndex: 1 },
         ],
         requestSummary: "인원 40명 → 50명",
       }),
@@ -365,7 +365,8 @@ describe("saveLines / saveEvent", () => {
     });
 
     await saveEvent(db, quoteId, 2, { ...EVENT, venue: "다른 강당" });
-    const line: QuoteLine = { itemId: null, label: "꽃", content: "", qty: 1, unitPrice: 50000, priceSource: "hand", svc: false, menu: "", note: "" };
+    // An edited line keeps its tip.
+    const line: QuoteLine = { itemId: null, label: "꽃", content: "", qty: 1, unitPrice: 50000, priceSource: "hand", svc: false, menu: "", note: "", tip: "AI 제안" };
     await saveLines(db, quoteId, 2, [line]);
     const v = (await getQuote(db, quoteId)).version;
     expect(v.event!.venue).toBe("다른 강당");
@@ -512,8 +513,8 @@ describe("imported quotes", () => {
     expect(view.quote.source).toBe("imported");
     expect(view.version).toMatchObject({ status: "ready", inputTokens: 7, outputTokens: 8 });
     expect(view.version.lines).toEqual([
-      { itemId: null, label: "도시락", content: "한식", qty: 30, unitPrice: 12000, priceSource: "imported", svc: false, menu: "", note: "" },
-      { itemId: null, label: "음료", content: "", qty: 30, unitPrice: null, priceSource: "imported", svc: true, menu: "", note: "" },
+      { itemId: null, label: "도시락", content: "한식", qty: 30, unitPrice: 12000, priceSource: "imported", svc: false, menu: "", note: "", tip: "" },
+      { itemId: null, label: "음료", content: "", qty: 30, unitPrice: null, priceSource: "imported", svc: true, menu: "", note: "", tip: "" },
     ]);
     expect(view.version.comparison).toEqual({ notes: "", rows: [] });
   });
@@ -649,6 +650,36 @@ describe("prompt", () => {
     expect(text).toContain(`"svc":true`);
     expect(text).toContain("SVC 빼 주세요");
   });
+
+  it("sends previous lines' notes but not their tips", () => {
+    const prevLine: QuoteLine = { itemId: 3, label: "다과", content: "", qty: 10, unitPrice: 9000, priceSource: "hand", svc: false, menu: "", note: "오후 3시 도착", tip: "지난 버전 제안" };
+    const text = textOf(buildQuoteUser({ text: "견적", sheet: [], candidates: [], prev: { lines: [prevLine], event: EVENT }, changeRequest: "x" }));
+    expect(text).toContain("오후 3시 도착");
+    expect(text).not.toContain("지난 버전 제안");
+    expect(text).not.toContain(`"tip"`);
+  });
+
+  it("system prompt splits the customer note from the owner-only tip", () => {
+    const system = buildQuoteSystem();
+    expect(system).toContain("note(비고)");
+    expect(system).toContain("tip(제안)");
+    expect(system).toContain("사장님만 본다");
+    expect(system).toContain("손님이 받는 견적서에 그대로 나간다");
+    // Owner-only advice goes to tip; no rule sends it to 비고 any more.
+    expect(system).not.toMatch(/비고에 "?SVC 제안/);
+    expect(system).not.toContain("최소 수량이 있으면 비고에");
+    expect(system).not.toContain("수정 요청에 단가가 있으면 비고에");
+    expect(system).not.toContain("비고에 제안으로");
+    expect(system).toContain("가장 먼저 뺄 만한 한두 줄에만 tip으로 적는다");
+    // Neither field carries amounts.
+    expect(system).toMatch(/note와 tip[^\n]*금액/);
+  });
+
+  it("output schema tells the model the tip is for the owner only", () => {
+    const shape = QuoteOutput.shape.lines.element.shape;
+    expect(shape.tip.description).toContain("사장님만");
+    expect(shape.note.description).toContain("견적서에 그대로 나간다");
+  });
 });
 
 describe("fake Claude calls", () => {
@@ -694,7 +725,7 @@ describe("revisions keep the price of a line without an itemId", () => {
     await startAndRun(quoteId, 1);
     await requestRevision(db, quoteId, "35명으로 바꿔 주세요", T1);
     const out = output({
-      lines: [{ itemId: snackId, label: "도시락", content: "한식", qty: 35, menu: "", note: "", prevIndex: 0 }],
+      lines: [{ itemId: snackId, label: "도시락", content: "한식", qty: 35, menu: "", note: "", tip: "", prevIndex: 0 }],
       requestSummary: "인원 30명 → 35명",
     });
     await startAndRun(quoteId, 2, deps({ quote: fixedQuote(out) }));
@@ -704,7 +735,7 @@ describe("revisions keep the price of a line without an itemId", () => {
 
   it("a v1 hand line keeps the owner's price when the model now picks a sheet item", async () => {
     const { quoteId } = await createQuote(db, { text: "꽃 장식 견적", source: "app" }, T0);
-    const v1 = output({ lines: [{ itemId: null, label: "꽃 장식", content: "", qty: 1, menu: "", note: "", prevIndex: null }] });
+    const v1 = output({ lines: [{ itemId: null, label: "꽃 장식", content: "", qty: 1, menu: "", note: "", tip: "", prevIndex: null }] });
     await startAndRun(quoteId, 1, deps({ quote: fixedQuote(v1) }));
     const [hand] = (await getQuote(db, quoteId)).version.lines!;
     expect(hand).toMatchObject({ itemId: null, unitPrice: null, priceSource: "hand" });
@@ -712,7 +743,7 @@ describe("revisions keep the price of a line without an itemId", () => {
 
     await requestRevision(db, quoteId, "2개로 해 주세요", T1);
     const v2 = output({
-      lines: [{ itemId: snackId, label: "꽃 장식", content: "", qty: 2, menu: "", note: "", prevIndex: 0 }],
+      lines: [{ itemId: snackId, label: "꽃 장식", content: "", qty: 2, menu: "", note: "", tip: "", prevIndex: 0 }],
       requestSummary: "수량 2개",
     });
     await startAndRun(quoteId, 2, deps({ quote: fixedQuote(v2) }));

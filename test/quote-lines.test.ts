@@ -56,6 +56,7 @@ function model(over: Partial<ModelLine> = {}): ModelLine {
     qty: 1,
     menu: "",
     note: "",
+    tip: "",
     prevIndex: null,
     ...over,
   };
@@ -135,6 +136,11 @@ describe("buildLines without a previous version", () => {
     expect(l).toMatchObject({ label: "다과 (오후)", content: "쿠키 외", menu: "m", note: "n" });
   });
 
+  it("copies the model's owner-only tip next to the customer note", () => {
+    const [l] = buildLines([model({ note: "오후 3시 도착", tip: "SVC 제안: 출장비" })], sheet, null);
+    expect(l).toMatchObject({ note: "오후 3시 도착", tip: "SVC 제안: 출장비" });
+  });
+
   it("keeps the item but has no price when the sheet item has none", () => {
     const [l] = buildLines([model({ itemId: 4, label: "가격 미정" })], sheet, null);
     expect(l).toMatchObject({ itemId: 4, unitPrice: null });
@@ -156,6 +162,14 @@ describe("buildLines carry-over from a previous version", () => {
   it("keeps a hand-set price and takes the new qty", () => {
     const [l] = buildLines([model({ qty: 350, prevIndex: 0 })], sheet, prev);
     expect(l).toMatchObject({ unitPrice: 9000, priceSource: "hand", qty: 350, svc: false });
+  });
+
+  it("a carried line takes the model's new tip, not the previous one", () => {
+    const p = [line({ unitPrice: 9000, priceSource: "hand", tip: "지난 제안" })];
+    const [kept] = buildLines([model({ prevIndex: 0, tip: "새 제안" })], sheet, p);
+    expect(kept).toMatchObject({ unitPrice: 9000, tip: "새 제안" });
+    const [cleared] = buildLines([model({ prevIndex: 0, tip: "" })], sheet, p);
+    expect(cleared.tip).toBe("");
   });
 
   it("keeps SVC", () => {
@@ -260,6 +274,10 @@ describe("diffLines", () => {
 
   it("is empty when nothing changed", () => {
     expect(diffLines([line()], [line()])).toEqual([]);
+  });
+
+  it("ignores tip changes", () => {
+    expect(diffLines([line({ tip: "지난 제안" })], [line({ tip: "새 제안" })])).toEqual([]);
   });
 
   it("matches lines without an itemId by label", () => {

@@ -1,4 +1,4 @@
-import { CircleAlertIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { CircleAlertIcon, LightbulbIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import { Input, inputClass } from "../../components/ui/input";
@@ -336,6 +336,13 @@ function LineRow({
           className={small}
         />
       </Cell>
+      {/* The AI's advice for her only: never in the Excel file. It rides along when she edits the line. */}
+      {line.tip && (
+        <p className="col-span-2 flex items-start gap-1.5 text-xs text-amber-800 md:col-span-full md:px-1">
+          <LightbulbIcon className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+          <span>AI 제안: {line.tip}</span>
+        </p>
+      )}
     </li>
   );
 }
