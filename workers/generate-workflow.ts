@@ -27,17 +27,15 @@ export class GeneratePostWorkflow extends WorkflowEntrypoint<Env, GenerateParams
     // startGeneration creates the instance with the id it stored as posts.workflow_id.
     const run: RunRef = { postId, workflowId: event.instanceId };
     const db = getDb(this.env.DB);
-    let done = false;
     try {
-      done = await step.do(
+      await step.do(
         "generate",
         {
           // Timing lives next to STALE_CLAIM_MS, which is derived from it.
           retries: { limit: STEP_RETRY_LIMIT, delay: `${STEP_RETRY_DELAY_SECONDS} seconds`, backoff: "exponential" },
           timeout: `${STEP_TIMEOUT_MINUTES} minutes`,
         },
-        // Nothing big crosses the step boundary (drafts are already in D1), only this flag:
-        // did a full generation finish.
+        // Nothing big crosses the step boundary: drafts are already in D1.
         async (ctx) => {
           const opts = { final: isFinalAttempt(ctx.attempt, STEP_RETRY_LIMIT) };
           const deps = makeGenDeps(this.env, db);
@@ -62,9 +60,12 @@ export class GeneratePostWorkflow extends WorkflowEntrypoint<Env, GenerateParams
       throw e;
     }
 
-    // A rewrite is not news; a full draft is. Own step, no retries: the claim is written before
-    // the send, so a retry could only skip anyway. A failure here never fails the run.
-    if (!channel && done) {
+    // A rewrite is not news; a full draft is. Asked after every full run, not only when this run
+    // reported committing: if the generate step dies after its commit, the retry finds the post
+    // already ready and reports false, and gating on that lost the ping. The claim (status ready,
+    // not yet notified) keeps it to one ping per post. Own step, no retries: the claim is written
+    // before the send, so a retry could only skip anyway. A failure here never fails the run.
+    if (!channel) {
       try {
         const outcome = await step.do("notify", { retries: { limit: 0, delay: "1 second" }, timeout: "1 minute" }, () =>
           notifyDraftReady(
