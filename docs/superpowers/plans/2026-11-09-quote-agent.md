@@ -124,15 +124,15 @@
     4. qty는 음수·소수를 0 이상 정수로 고친다.
   - `diffLines(prev: QuoteLine[], next: QuoteLine[]): string[]`. 줄은 `itemId`(없으면 label)로 맞춘다. 결과 예:
     - `"추가: <label>"`, `"삭제: <label>"`
-    - `"수량 300→350: <label>"`, `"단가 8,500→9,000원: <label>"`
+    - `"수량 300→350: <label>"`, `"단가 7,700→9,000원: <label>"`
     - `"SVC 켬: <label>"`, `"SVC 끔: <label>"`
 
-- [ ] **Step 1:** 실패하는 테스트를 쓴다(가짜 기준표: id 1 "다과 4종" 1인 8,500 / id 2 "출장료" 1회 100,000 / id 3 꺼진 항목).
-  - `computeTotals`, VAT 켬: 500×8,500 + 1×100,000 → `{ supply: 4,350,000, vat: 435,000, total: 4,785,000, missingPrices: 0 }`.
+- [ ] **Step 1:** 실패하는 테스트를 쓴다(가짜 기준표: id 1 "다과 4종" 1인 7,700 / id 2 "출장료" 1회 100,000 / id 3 꺼진 항목).
+  - `computeTotals`, VAT 켬: 500×7,700 + 1×100,000 → `{ supply: 3,950,000, vat: 395,000, total: 4,345,000, missingPrices: 0 }`.
   - VAT 끔: `vat 0`, `total === supply`.
   - SVC 줄은 빠지고, `lineAmount`가 `"SVC"`.
   - 단가 null 줄은 빠지고 `missingPrices 1`, `lineAmount`가 null.
-  - `buildLines`, prev 없음: id 1 → 8,500 sheet / 없는 id 99 → null hand / 꺼진 id 3 → null hand.
+  - `buildLines`, prev 없음: id 1 → 7,700 sheet / 없는 id 99 → null hand / 꺼진 id 3 → null hand.
   - 수정 버전: prev[0]이 hand 9,000이고 모델이 `prevIndex 0`, 같은 itemId, qty 350 → 9,000 hand, qty 350.
   - prev[1]이 SVC이고 `prevIndex 1` → SVC 유지.
   - 두 모델 줄이 같은 `prevIndex 0`을 가리키면 첫 줄만 가져오고 둘째는 규칙 2/3을 따른다.
@@ -407,7 +407,7 @@
 - Modify: `docs/deploy-checklist.md`, `README.md` (견적·경쟁 업체 감시 기능 한 단락. 경쟁 업체 이름은 쓰지 않는다)
 - Create (커밋 안 함): `private/seed-watch-2026-11-09.sql`
 
-- [ ] **Step 1:** `private/seed-watch-2026-11-09.sql`을 쓴다. 조사 결과(`private/competitor-research-2026-11-09/`, 이 세션 요약)에서 RSS가 되는 블로그 4~5개와 텍스트 가격 페이지 2~3개를 `watch_sources`에 넣는다. 드호는 memo에 "사장님 확인 필요: 같은 업체인지, 협력사인지"를 적는다.
+- [ ] **Step 1:** `private/seed-watch-2026-11-09.sql`을 쓴다. 조사 결과(`private/competitor-research-2026-11-09/`, 이 세션 요약)에서 RSS가 되는 블로그 4~5개와 텍스트 가격 페이지 2~3개를 `watch_sources`에 넣는다. 업체 A는 memo에 "사장님 확인 필요: 같은 업체인지, 협력사인지"를 적는다.
 - [ ] **Step 2:** 원격 마이그레이션(새 것이 있으면) → 시드 → `npm run deploy`. Version ID를 적는다.
 - [ ] **Step 3:** 실제 확인.
   - 경쟁 업체 화면에서 "지금 한 번 돌리기" → 몇 분 뒤 소식·가격 탭에 줄이 생기는지, 출처마다 상태가 ok인지 본다.

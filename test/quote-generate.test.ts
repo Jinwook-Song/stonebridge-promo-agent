@@ -134,7 +134,7 @@ beforeEach(async () => {
   const items = await db
     .insert(priceItems)
     .values([
-      { kind: "per_person", name: "다과 세트", unit: "인", unitPrice: 8500, sort: 0, createdAt: T0.toISOString() },
+      { kind: "per_person", name: "다과 세트", unit: "인", unitPrice: 7700, sort: 0, createdAt: T0.toISOString() },
       { kind: "per_person", name: "커피", unit: "인", unitPrice: 3000, sort: 1, createdAt: T0.toISOString() },
     ])
     .returning({ id: priceItems.id });
@@ -190,7 +190,7 @@ describe("createQuote → startQuoteGeneration → runQuoteGeneration → getQuo
     });
     expect(view.version.event).toEqual(EVENT);
     expect(view.version.lines).toEqual([
-      { itemId: snackId, label: "다과 세트", content: "쿠키 2종", qty: 40, unitPrice: 8500, priceSource: "sheet", svc: false, menu: "", note: "", tip: "" },
+      { itemId: snackId, label: "다과 세트", content: "쿠키 2종", qty: 40, unitPrice: 7700, priceSource: "sheet", svc: false, menu: "", note: "", tip: "" },
       { itemId: coffeeId, label: "커피", content: "", qty: 40, unitPrice: 3000, priceSource: "sheet", svc: false, menu: "", note: "", tip: "" },
     ]);
     expect(view.versions).toEqual([{ version: 1, status: "ready", createdAt: T0.toISOString() }]);
@@ -389,8 +389,8 @@ describe("quote fields, list and delete", () => {
       eventType: "학원 다과",
       eventDate: "2026-12-01",
       headcount: 40,
-      // 40 × 8,500 + 40 × 3,000, VAT off.
-      total: 460_000,
+      // 40 × 7,700 + 40 × 3,000, VAT off.
+      total: 428_000,
       missingPrices: 0,
       status: "won",
       latestVersion: 1,
@@ -399,7 +399,7 @@ describe("quote fields, list and delete", () => {
     expect(list[0]).toMatchObject({ customerName: "", total: null, latestVersion: 1, latestStatus: "generating" });
 
     await setVat(db, a.quoteId, true);
-    expect((await listQuotes(db))[1].total).toBe(460_000 + 46_000);
+    expect((await listQuotes(db))[1].total).toBe(428_000 + 42_800);
   });
 
   it("saves sender and status with validation, and deletes with versions", async () => {

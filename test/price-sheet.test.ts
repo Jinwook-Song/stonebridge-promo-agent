@@ -22,7 +22,7 @@ function input(over: Partial<PriceItemInput> = {}): PriceItemInput {
     name: "다과 4종",
     content: "",
     unit: "인",
-    unitPrice: 8500,
+    unitPrice: 7700,
     minimumQty: null,
     menu: "",
     note: "",
@@ -121,8 +121,8 @@ describe("deletePriceItem", () => {
 
 describe("parseWon", () => {
   it("accepts digits, commas and spaces; empty is null", () => {
-    expect(parseWon("8500")).toBe(8500);
-    expect(parseWon(" 8,500 ")).toBe(8500);
+    expect(parseWon("7700")).toBe(7700);
+    expect(parseWon(" 7,700 ")).toBe(7700);
     expect(parseWon("1 000 000")).toBe(1000000);
     expect(parseWon("")).toBeNull();
     expect(parseWon("  ")).toBeNull();
@@ -130,7 +130,7 @@ describe("parseWon", () => {
   });
 
   it("rejects anything else with INVALID_INPUT", () => {
-    for (const bad of ["abc", "8500원", "-5", "1.5", "1e3"]) {
+    for (const bad of ["abc", "7700원", "-5", "1.5", "1e3"]) {
       expect(() => parseWon(bad)).toThrowError(expect.objectContaining({ code: "INVALID_INPUT" }));
     }
   });

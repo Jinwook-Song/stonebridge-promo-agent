@@ -22,7 +22,7 @@ export type PriceItemInput = {
 
 const MAX_WON = 100_000_000;
 
-/** Form text to whole won: "8,500" and "8500" both work, empty means no price yet. */
+/** Form text to whole won: "7,700" and "7700" both work, empty means no price yet. */
 export function parseWon(raw: string): number | null {
   const text = raw.replace(/[,\s]/g, "");
   if (text === "") return null;

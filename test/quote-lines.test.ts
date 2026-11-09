@@ -27,7 +27,7 @@ function item(over: Partial<PriceItem> & { id: number; name: string }): PriceIte
 }
 
 const sheet: PriceItem[] = [
-  item({ id: 1, name: "다과 4종", unitPrice: 8500 }),
+  item({ id: 1, name: "다과 4종", unitPrice: 7700 }),
   item({ id: 2, name: "출장료", kind: "per_event", unit: "회", unitPrice: 100000 }),
   item({ id: 3, name: "꺼진 항목", unitPrice: 5000, enabled: false }),
   item({ id: 4, name: "가격 미정", unitPrice: null }),
@@ -39,7 +39,7 @@ function line(over: Partial<QuoteLine> = {}): QuoteLine {
     label: "다과 4종",
     content: "",
     qty: 1,
-    unitPrice: 8500,
+    unitPrice: 7700,
     priceSource: "sheet",
     svc: false,
     menu: "",
@@ -67,9 +67,9 @@ describe("lineAmount / computeTotals", () => {
 
   it("adds VAT when included", () => {
     expect(computeTotals(lines, true)).toEqual({
-      supply: 4350000,
-      vat: 435000,
-      total: 4785000,
+      supply: 3950000,
+      vat: 395000,
+      total: 4345000,
       missingPrices: 0,
     });
   });
@@ -78,7 +78,7 @@ describe("lineAmount / computeTotals", () => {
     const t = computeTotals(lines, false);
     expect(t.vat).toBe(0);
     expect(t.total).toBe(t.supply);
-    expect(t.supply).toBe(4350000);
+    expect(t.supply).toBe(3950000);
   });
 
   it("rounds VAT to whole won", () => {
@@ -88,14 +88,14 @@ describe("lineAmount / computeTotals", () => {
   it("leaves SVC lines out of the supply amount", () => {
     const svc = line({ itemId: 5, label: "서비스", qty: 10, svc: true });
     expect(lineAmount(svc)).toBe("SVC");
-    expect(computeTotals([...lines, svc], true).supply).toBe(4350000);
+    expect(computeTotals([...lines, svc], true).supply).toBe(3950000);
   });
 
   it("leaves lines without a price out and counts them", () => {
     const missing = line({ itemId: null, label: "특별 요청", qty: 3, unitPrice: null, priceSource: "hand" });
     expect(lineAmount(missing)).toBeNull();
     const t = computeTotals([...lines, missing], true);
-    expect(t.supply).toBe(4350000);
+    expect(t.supply).toBe(3950000);
     expect(t.missingPrices).toBe(1);
   });
 
@@ -122,7 +122,7 @@ describe("buildLines without a previous version", () => {
       sheet,
       null,
     );
-    expect(out[0]).toMatchObject({ itemId: 1, unitPrice: 8500, priceSource: "sheet", svc: false, qty: 500 });
+    expect(out[0]).toMatchObject({ itemId: 1, unitPrice: 7700, priceSource: "sheet", svc: false, qty: 500 });
     expect(out[1]).toMatchObject({ itemId: null, unitPrice: null, priceSource: "hand", svc: false });
     expect(out[2]).toMatchObject({ itemId: null, unitPrice: null, priceSource: "hand", svc: false });
   });
@@ -149,7 +149,7 @@ describe("buildLines without a previous version", () => {
 
   it("ignores a prevIndex when there is no previous version", () => {
     const [l] = buildLines([model({ prevIndex: 0 })], sheet, null);
-    expect(l).toMatchObject({ unitPrice: 8500, priceSource: "sheet" });
+    expect(l).toMatchObject({ unitPrice: 7700, priceSource: "sheet" });
   });
 });
 
@@ -212,16 +212,16 @@ describe("buildLines carry-over from a previous version", () => {
   it("only lets the first line claim a previous line", () => {
     const out = buildLines([model({ qty: 350, prevIndex: 0 }), model({ qty: 20, prevIndex: 0 })], sheet, prev);
     expect(out[0]).toMatchObject({ unitPrice: 9000, priceSource: "hand" });
-    expect(out[1]).toMatchObject({ unitPrice: 8500, priceSource: "sheet", svc: false, qty: 20 });
+    expect(out[1]).toMatchObject({ unitPrice: 7700, priceSource: "sheet", svc: false, qty: 20 });
   });
 
   it("treats an out-of-range prevIndex as a new line", () => {
     const [l] = buildLines([model({ prevIndex: 7 })], sheet, prev);
-    expect(l).toMatchObject({ unitPrice: 8500, priceSource: "sheet" });
+    expect(l).toMatchObject({ unitPrice: 7700, priceSource: "sheet" });
     const [neg] = buildLines([model({ prevIndex: -1 })], sheet, prev);
-    expect(neg).toMatchObject({ unitPrice: 8500, priceSource: "sheet" });
+    expect(neg).toMatchObject({ unitPrice: 7700, priceSource: "sheet" });
     const [frac] = buildLines([model({ prevIndex: 0.5 })], sheet, prev);
-    expect(frac).toMatchObject({ unitPrice: 8500, priceSource: "sheet" });
+    expect(frac).toMatchObject({ unitPrice: 7700, priceSource: "sheet" });
   });
 
   it("treats a prevIndex whose itemId changed as a new line", () => {
@@ -264,7 +264,7 @@ describe("diffLines", () => {
   });
 
   it("reports a price change with thousands separators", () => {
-    expect(diffLines([line()], [line({ unitPrice: 9000 })])).toEqual(["단가 8,500→9,000원: 다과 4종"]);
+    expect(diffLines([line()], [line({ unitPrice: 9000 })])).toEqual(["단가 7,700→9,000원: 다과 4종"]);
   });
 
   it("reports SVC on and off", () => {
