@@ -2,10 +2,11 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { quotes, quoteVersions } from "../database/schema";
-import { action as detailAction } from "../app/routes/quote-detail";
+import { action as detailAction, loader as detailLoader } from "../app/routes/quote-detail";
 import { action as newAction } from "../app/routes/quote-new";
 import { loader as layoutLoader, middleware } from "../app/routes/owner-layout";
-import { createQuote, listQuotes } from "../app/quote/quotes.server";
+import { createQuote, deleteQuote, listQuotes } from "../app/quote/quotes.server";
+import { savePriceItem } from "../app/quote/price-sheet.server";
 import { getDb } from "../app/server/db";
 
 const db = getDb(env.DB);
@@ -146,5 +147,51 @@ describe("login guard", () => {
       expect((thrown as Response).status).toBe(302);
       expect((thrown as Response).headers.get("Location")).toBe("/login");
     }
+  });
+});
+
+describe("quote-detail loader", () => {
+  it("lists which own quotes in the comparison still exist", async () => {
+    const { quoteId: kept } = await createQuote(db, { text: "지난 문의 하나", source: "app" }, now);
+    const { quoteId: gone } = await createQuote(db, { text: "지난 문의 둘", source: "app" }, now);
+    await deleteQuote(db, gone);
+    const { quoteId } = await createQuote(db, { text: "새 문의", source: "app" }, now);
+    const own = (id: number) => ({ id: `q${id}`, kind: "own", label: "", perPerson: null, sourceUrl: null, seenAt: null });
+    await db
+      .update(quoteVersions)
+      .set({
+        status: "ready",
+        eventJson: JSON.stringify({
+          customerName: "", contactName: "", contact: "", email: "", eventDate: "", headcount: null,
+          venue: "", eventType: "", budget: "", requests: "", missing: [],
+        }),
+        linesJson: "[]",
+        comparisonJson: JSON.stringify({ notes: "", rows: [own(kept), own(gone)], citedIds: [] }),
+      })
+      .where(eq(quoteVersions.quoteId, quoteId));
+
+    const res = (await detailLoader({
+      request: new Request(`http://localhost/quotes/${quoteId}`),
+      params: { id: String(quoteId) },
+      context: {},
+    } as never)) as { liveQuoteIds: number[] };
+    expect(res.liveQuoteIds).toEqual([kept]);
+  });
+
+  it("gives the kind of switched-off price items too", async () => {
+    const off = await savePriceItem(
+      db,
+      { kind: "per_event", name: "꺼진 출장비", content: "", unit: "회", unitPrice: 1000, minimumQty: null, menu: "", note: "", needsConfirm: false, enabled: false, sort: 0 },
+      now,
+    );
+    const { quoteId } = await createQuote(db, { text: "문의", source: "app" }, now);
+    await db.update(quoteVersions).set({ status: "ready", linesJson: "[]" }).where(eq(quoteVersions.quoteId, quoteId));
+    const res = (await detailLoader({
+      request: new Request(`http://localhost/quotes/${quoteId}`),
+      params: { id: String(quoteId) },
+      context: {},
+    } as never)) as { itemKinds: [number, string][]; sheet: { id: number }[] };
+    expect(res.itemKinds).toContainEqual([off, "per_event"]);
+    expect(res.sheet.map((s) => s.id)).not.toContain(off);
   });
 });

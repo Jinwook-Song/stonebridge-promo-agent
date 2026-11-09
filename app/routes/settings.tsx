@@ -71,7 +71,7 @@ export async function loader({}: Route.LoaderArgs) {
 
 function oneOf<T extends string>(values: readonly T[], raw: FormDataEntryValue | null): T {
   if (typeof raw === "string" && (values as readonly string[]).includes(raw)) return raw as T;
-  throw new DomainError("INVALID_STATE", "잘못된 요청입니다.");
+  throw new DomainError("INVALID_STATE", "잘못된 요청이에요.");
 }
 
 export async function action({ request }: Route.ActionArgs): Promise<NonNullable<ActionResult>> {
@@ -131,7 +131,7 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
         await setExampleKind(db, Number(str("id")), oneOf(POST_KINDS, form.get("kind")));
         break;
       default:
-        return { error: "잘못된 요청입니다." };
+        return { error: "잘못된 요청이에요." };
     }
   } catch (e) {
     if (e instanceof DomainError) return { error: e.message };
@@ -190,7 +190,7 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
         <SettingField name="priceTable" label="가격표" value={settings.priceTable} rows={6} warnEmpty />
         <SettingField name="voiceRules" label="말투 규칙" value={settings.voiceRules} rows={8} />
         <SettingField name="channelRules" label="채널 규칙" value={settings.channelRules} rows={10} />
-        <Message result={actionData} success="저장했습니다." />
+        <Message result={actionData} success="저장했어요." />
         <Button type="submit" size="lg" className="h-12" disabled={saving}>
           {saving ? "저장 중…" : "저장"}
         </Button>
@@ -202,12 +202,12 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
             예시 글
           </h2>
           <p className="text-sm text-muted-foreground">
-            켜 둔 글만 새 글을 쓸 때 참고합니다. 종류를 맞춰 두면 비슷한 글이 먼저 쓰입니다.
+            켜 둔 글만 새 글을 쓸 때 참고해요. 종류를 맞춰 두면 비슷한 글을 먼저 참고해요.
           </p>
         </div>
         {examples.length === 0 ? (
           <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
-            아직 예시가 없습니다.
+            아직 예시가 없어요.
           </p>
         ) : (
           <ul className="flex flex-col gap-2">

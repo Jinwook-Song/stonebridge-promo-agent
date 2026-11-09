@@ -1,6 +1,6 @@
 // Pure quote math: no DB, no Date, so it also runs in the browser for live totals.
 import type { priceItems } from "../../database/schema";
-import type { QuoteLine } from "./types";
+import type { PriceKind, QuoteLine } from "./types";
 
 export type PriceItem = typeof priceItems.$inferSelect;
 
@@ -157,4 +157,36 @@ export function diffLines(prev: QuoteLine[], next: QuoteLine[]): string[] {
     if (!matched.has(key)) out.push(`삭제: ${line.label}`);
   }
   return out;
+}
+
+/**
+ * The owner changed the headcount on screen: 1인 lines that were counting the old headcount move
+ * to the new one. A line follows only while its qty still is the old headcount (or 0, the "인원 모름"
+ * qty, for a 1인 sheet item), so a qty she set on purpose stays. A line with no item on the sheet
+ * (typed in, imported, or its item since removed) has no known kind: it follows only on an exact
+ * match with a known old headcount. 1회 lines never follow. A cleared or zero headcount changes
+ * nothing. `changed`: indexes of the lines that moved (for the on-screen notice and its undo).
+ */
+export function followHeadcount(
+  lines: QuoteLine[],
+  kinds: ReadonlyMap<number, PriceKind>,
+  from: number | null,
+  to: number | null,
+): { lines: QuoteLine[]; changed: number[] } {
+  if (to === null || to <= 0 || to === from) return { lines, changed: [] };
+  const known = from !== null && from > 0;
+  const changed: number[] = [];
+  const next = lines.map((line, index) => {
+    const kind = line.itemId === null ? undefined : kinds.get(line.itemId);
+    const follows =
+      kind === "per_person"
+        ? known
+          ? line.qty === from
+          : line.qty === 0
+        : kind === undefined && known && line.qty === from;
+    if (!follows) return line;
+    changed.push(index);
+    return { ...line, qty: Math.min(to, MAX_QTY) };
+  });
+  return changed.length === 0 ? { lines, changed } : { lines: next, changed };
 }

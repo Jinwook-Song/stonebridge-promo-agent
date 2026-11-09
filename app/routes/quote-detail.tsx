@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { CheckIcon, CircleAlertIcon, CopyIcon, DownloadIcon, LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { data, Link, redirect, useFetcher } from "react-router";
 import type { Route } from "./+types/quote-detail";
 import { Button } from "../components/ui/button";
@@ -12,14 +12,16 @@ import { Textarea } from "../components/ui/textarea";
 import { copyText } from "../promo/clipboard";
 import { useStatusPolling } from "../promo/components/use-status-polling";
 import { formatDay } from "../promo/format-date";
+import { ownQuoteId } from "../quote/comparison-view";
 import { ComparisonPanel } from "../quote/components/ComparisonPanel";
 import { EventForm } from "../quote/components/EventForm";
-import { LinesTable } from "../quote/components/LinesTable";
+import { LinesTable, type LinesHandle } from "../quote/components/LinesTable";
 import { useJsonSaver, useReportSync, type QuoteActionResult, type SyncState } from "../quote/components/use-saver";
 import { startQuoteGeneration } from "../quote/generate.server";
 import { listPriceItems } from "../quote/price-sheet.server";
 import {
   deleteQuote,
+  existingQuoteIds,
   getQuote,
   isFreshClaim,
   requestRevision,
@@ -29,7 +31,7 @@ import {
   setStatus,
   setVat,
 } from "../quote/quotes.server";
-import { QUOTE_STATUSES, QUOTE_STATUS_LABELS, type QuoteEvent, type QuoteStatus, type Sender } from "../quote/types";
+import { QUOTE_STATUSES, QUOTE_STATUS_LABELS, type PriceKind, type QuoteEvent, type QuoteStatus, type Sender } from "../quote/types";
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
 import { cn } from "../lib/utils";
@@ -63,7 +65,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     if (e instanceof DomainError && e.code === "NOT_FOUND") throw data(e.message, { status: 404 });
     throw e;
   }
-  const sheet = await listPriceItems(db, { enabledOnly: true });
+  const ownIds = (view.version.comparison?.rows ?? []).map(ownQuoteId).filter((n) => n !== null);
+  const [items, liveQuoteIds] = await Promise.all([listPriceItems(db), existingQuoteIds(db, ownIds)]);
+  const sheet = items.filter((s) => s.enabled);
 
   const latest = view.versions.at(-1)!;
   const isLatest = view.version.version === latest.version;
@@ -74,6 +78,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     ...view,
     sheet: sheet.map((s) => ({
       id: s.id,
+      kind: s.kind,
       name: s.name,
       content: s.content,
       unit: s.unit,
@@ -82,6 +87,9 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       menu: s.menu,
       note: s.note,
     })),
+    liveQuoteIds,
+    // Every item's kind, switched-off ones too: a line keeps its item after the item is switched off.
+    itemKinds: items.map((s) => [s.id, s.kind] as [number, PriceKind]),
     latestVersion: latest.version,
     latestStatus: latest.status,
     isLatest,
@@ -380,6 +388,7 @@ function RevisionForm({ quoteId, initial = "", label = "수정 요청 보내기"
 
 function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullable<Loaded["version"]["lines"]>; event: QuoteEvent }) {
   const { quote, version, sheet, isLatest } = loaded;
+  const liveQuoteIds = useMemo(() => new Set(loaded.liveQuoteIds), [loaded.liveQuoteIds]);
   const readOnly = !isLatest;
   const vatFetcher = useFetcher<QuoteActionResult>();
   // The switch moves at once; the reloaded page then agrees.
@@ -394,6 +403,7 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
   const syncs = [linesSync, eventSync, senderSync];
   const fileSync: SyncState = syncs.includes("saving") ? "saving" : syncs.includes("failed") ? "failed" : "saved";
   const unsaved = fileSync !== "saved";
+  const linesRef = useRef<LinesHandle>(null);
 
   return (
     <>
@@ -417,17 +427,20 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
           initialEvent={event}
           readOnly={readOnly}
           onUnsavedChange={setEventSync}
+          onHeadcountChange={(from, to) => linesRef.current?.followHeadcount(from, to)}
         />
       </Section>
 
       <Section title="견적 표">
         <LinesTable
           key={scope}
+          ref={linesRef}
           quoteId={quote.id}
           version={version.version}
           initialLines={lines}
           vatIncluded={vatIncluded}
           sheet={sheet}
+          itemKinds={loaded.itemKinds}
           readOnly={readOnly}
           onUnsavedChange={setLinesSync}
         />
@@ -435,7 +448,7 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
       </Section>
 
       <Section title="비교">
-        <ComparisonPanel comparison={version.comparison} />
+        <ComparisonPanel comparison={version.comparison} liveQuoteIds={liveQuoteIds} />
       </Section>
 
       <Section title="회신 메일">

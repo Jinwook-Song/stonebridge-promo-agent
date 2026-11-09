@@ -52,7 +52,7 @@ export async function attemptLogin(
       and(eq(loginAttempts.ip, ip), eq(loginAttempts.ok, false), gte(loginAttempts.at, since)),
     );
   if (failures.length > MAX_FAILURES) {
-    throw new DomainError("RATE_LIMITED", "로그인 시도가 너무 많습니다. 잠시 후 다시 시도하세요.");
+    throw new DomainError("RATE_LIMITED", "로그인 시도가 너무 많아요. 잠시 후 다시 시도해 주세요.");
   }
 
   const stored = await getStoredHash(db);

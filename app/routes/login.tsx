@@ -40,7 +40,7 @@ export async function action({ request }: Route.ActionArgs) {
   try {
     await ensureOwnerPassword(db, env.OWNER_INITIAL_PASSWORD);
     const ok = await attemptLogin(db, ip, password, new Date());
-    if (!ok) return { error: "비밀번호가 올바르지 않습니다." };
+    if (!ok) return { error: "비밀번호가 올바르지 않아요." };
   } catch (e) {
     if (e instanceof DomainError && e.code === "RATE_LIMITED") {
       return { error: e.message };

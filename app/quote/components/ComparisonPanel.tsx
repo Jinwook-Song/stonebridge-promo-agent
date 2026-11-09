@@ -25,14 +25,21 @@ const isWebUrl = (url: string) => /^https?:\/\//i.test(url);
  * events, up to PANEL_LIMIT of each until "더 보기". Rows the AI's note rests on are marked
  * "근거" and listed first. The note is stored only when it cites at least one of these rows.
  */
-export function ComparisonPanel({ comparison }: { comparison: Comparison | null }) {
+export function ComparisonPanel({
+  comparison,
+  liveQuoteIds,
+}: {
+  comparison: Comparison | null;
+  /** Own quotes that still exist: a deleted one is listed without a link. */
+  liveQuoteIds: ReadonlySet<number>;
+}) {
   if (!comparison || comparison.rows.length === 0) {
     return <p className="text-sm text-muted-foreground">아직 비교할 자료가 없어요</p>;
   }
   return (
     <div className="flex flex-col gap-3">
       {comparison.notes.trim() !== "" && <p className="text-sm leading-relaxed break-keep">{comparison.notes}</p>}
-      {comparisonGroups(comparison).map((group) => (
+      {comparisonGroups(comparison, liveQuoteIds).map((group) => (
         <KindGroup key={group.kind} group={group} />
       ))}
     </div>

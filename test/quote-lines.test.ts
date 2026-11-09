@@ -3,6 +3,7 @@ import {
   buildLines,
   computeTotals,
   diffLines,
+  followHeadcount,
   lineAmount,
   type ModelLine,
   type PriceItem,
@@ -308,5 +309,67 @@ describe("diffLines", () => {
     const a = line({ qty: 1 });
     const b = line({ qty: 2 });
     expect(diffLines([a, b], [a, b])).toEqual([]);
+  });
+});
+
+describe("followHeadcount", () => {
+  const kinds = new Map(sheet.map((s) => [s.id, s.kind]));
+  const qtys = (lines: QuoteLine[]) => lines.map((l) => l.qty);
+
+  it("moves 1인 sheet lines whose qty was the old headcount", () => {
+    const lines = [line({ qty: 100 }), line({ itemId: 2, label: "출장료", qty: 1 })];
+    const r = followHeadcount(lines, kinds, 100, 120);
+    expect(qtys(r.lines)).toEqual([120, 1]);
+    expect(r.changed).toEqual([0]);
+  });
+
+  it("keeps a 1인 line the owner set to something else", () => {
+    const r = followHeadcount([line({ qty: 110 })], kinds, 100, 120);
+    expect(qtys(r.lines)).toEqual([110]);
+    expect(r.changed).toEqual([]);
+  });
+
+  it("fills 1인 lines left at 0 when the headcount was unknown", () => {
+    const r = followHeadcount([line({ qty: 0 }), line({ itemId: 4, label: "가격 미정", qty: 0 })], kinds, null, 50);
+    expect(qtys(r.lines)).toEqual([50, 50]);
+    expect(r.changed).toEqual([0, 1]);
+  });
+
+  it("moves a line with no sheet item only when its qty is exactly the old headcount", () => {
+    const hand = (qty: number) => line({ itemId: null, priceSource: "hand", qty });
+    const r = followHeadcount([hand(100), hand(1), hand(99)], kinds, 100, 80);
+    expect(qtys(r.lines)).toEqual([80, 1, 99]);
+    expect(r.changed).toEqual([0]);
+  });
+
+  it("treats a line whose item left the sheet like a line with no item", () => {
+    const gone = line({ itemId: 3, qty: 100 });
+    expect(followHeadcount([gone], new Map(), 100, 80).changed).toEqual([0]);
+    expect(followHeadcount([line({ itemId: 3, qty: 0 })], new Map(), null, 80).changed).toEqual([]);
+  });
+
+  it("never moves 1회 lines", () => {
+    const r = followHeadcount([line({ itemId: 2, label: "출장료", qty: 100 })], kinds, 100, 120);
+    expect(r.changed).toEqual([]);
+  });
+
+  it("does nothing when the headcount is cleared, zero or the same", () => {
+    const lines = [line({ qty: 100 })];
+    for (const to of [null, 0, 100]) {
+      const r = followHeadcount(lines, kinds, 100, to);
+      expect(r.changed).toEqual([]);
+      expect(r.lines).toBe(lines);
+    }
+  });
+
+  it("leaves no-item lines alone when the old headcount was unknown", () => {
+    const r = followHeadcount([line({ itemId: null, priceSource: "hand", qty: 0 })], kinds, null, 30);
+    expect(r.changed).toEqual([]);
+  });
+
+  it("does not change the lines it was given", () => {
+    const lines = [line({ qty: 100 })];
+    followHeadcount(lines, kinds, 100, 120);
+    expect(lines[0].qty).toBe(100);
   });
 });

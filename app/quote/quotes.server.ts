@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { quotes, quoteVersions } from "../../database/schema";
 import { STALE_CLAIM_MS } from "../promo/generate.server";
@@ -435,4 +435,12 @@ export async function setStatus(db: Db, quoteId: number, status: QuoteStatus, no
 export async function deleteQuote(db: Db, quoteId: number): Promise<void> {
   const deleted = await db.delete(quotes).where(eq(quotes.id, quoteId)).returning({ id: quotes.id });
   if (deleted.length === 0) throw new DomainError("NOT_FOUND", "견적을 찾을 수 없어요.");
+}
+
+/** Which of these quotes still exist (a comparison keeps own rows of quotes deleted since). */
+export async function existingQuoteIds(db: Db, ids: number[]): Promise<number[]> {
+  const wanted = [...new Set(ids)];
+  if (wanted.length === 0) return [];
+  const rows = await db.select({ id: quotes.id }).from(quotes).where(inArray(quotes.id, wanted)).orderBy(asc(quotes.id));
+  return rows.map((r) => r.id);
 }
