@@ -199,6 +199,34 @@ describe("runGeneration", () => {
   });
 });
 
+describe("runGeneration result", () => {
+  it("is true when the run made the post ready", async () => {
+    expect(await runGeneration(deps(), run)).toBe(true);
+  });
+
+  it("is false when the run no longer owns the post", async () => {
+    expect(await runGeneration(deps(), { postId, workflowId: "some-older-run" })).toBe(false);
+  });
+
+  it("is false when the run is superseded while Claude is writing", async () => {
+    const supersede = () => db.update(posts).set({ workflowId: "post-newer-run" }).where(eq(posts.id, postId));
+    const drafts: DraftCall = async () => {
+      await supersede();
+      return { output: OUT, inputTokens: 1, outputTokens: 1 };
+    };
+    expect(await runGeneration(deps({ drafts }), run)).toBe(false);
+    expect((await row()).status).toBe("generating");
+  });
+
+  it("is false on a GenerationError", async () => {
+    const drafts: DraftCall = async () => {
+      throw new GenerationError("refusal");
+    };
+    expect(await runGeneration(deps({ drafts }), run)).toBe(false);
+    expect((await row()).status).toBe("failed");
+  });
+});
+
 describe("runGeneration with an unset PUBLIC_ORIGIN", () => {
   it("fails right away with the admin message, without calling Claude or asking for a retry", async () => {
     await db.insert(photos).values([{ postId, r2Key: `posts/${postId}/1.jpg`, position: 1, width: 1, height: 1 }]);

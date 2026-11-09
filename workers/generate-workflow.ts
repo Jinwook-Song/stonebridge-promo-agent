@@ -13,6 +13,8 @@ import {
   type GenerateParams,
   type RunRef,
 } from "../app/promo/generate.server";
+import { kakaoConfig } from "../app/kakao/link.server";
+import { notifyDraftReady } from "../app/kakao/draft-ready.server";
 import { getDb } from "../app/server/db";
 
 /**
@@ -25,20 +27,26 @@ export class GeneratePostWorkflow extends WorkflowEntrypoint<Env, GenerateParams
     // startGeneration creates the instance with the id it stored as posts.workflow_id.
     const run: RunRef = { postId, workflowId: event.instanceId };
     const db = getDb(this.env.DB);
+    let done = false;
     try {
-      await step.do(
+      done = await step.do(
         "generate",
         {
           // Timing lives next to STALE_CLAIM_MS, which is derived from it.
           retries: { limit: STEP_RETRY_LIMIT, delay: `${STEP_RETRY_DELAY_SECONDS} seconds`, backoff: "exponential" },
           timeout: `${STEP_TIMEOUT_MINUTES} minutes`,
         },
+        // Nothing big crosses the step boundary (drafts are already in D1), only this flag:
+        // did a full generation finish.
         async (ctx) => {
           const opts = { final: isFinalAttempt(ctx.attempt, STEP_RETRY_LIMIT) };
           const deps = makeGenDeps(this.env, db);
           try {
-            if (channel) await runRewrite(deps, run, channel, instruction ?? "", opts);
-            else await runGeneration(deps, run, opts);
+            if (channel) {
+              await runRewrite(deps, run, channel, instruction ?? "", opts);
+              return false;
+            }
+            return await runGeneration(deps, run, opts);
           } catch (e) {
             // A bad key or a rejected request fails the same way every time: stop now. The
             // runner has already recorded the reason on the post.
@@ -46,14 +54,29 @@ export class GeneratePostWorkflow extends WorkflowEntrypoint<Env, GenerateParams
             if (permanent) throw new NonRetryableError(permanent.message);
             throw e;
           }
-          // Nothing big crosses the step boundary; drafts are already in D1.
-          return null;
         },
       );
     } catch (e) {
       // Retries used up, or a step timed out before the runner could record anything.
       await failIfStillGenerating(db, run, channel !== undefined);
       throw e;
+    }
+
+    // A rewrite is not news; a full draft is. Own step, no retries: the claim is written before
+    // the send, so a retry could only skip anyway. A failure here never fails the run.
+    if (!channel && done) {
+      try {
+        const outcome = await step.do("notify", { retries: { limit: 0, delay: "1 second" }, timeout: "1 minute" }, () =>
+          notifyDraftReady(
+            { db, cfg: kakaoConfig(this.env), origin: this.env.PUBLIC_ORIGIN, fetch: (u, i) => fetch(u, i) },
+            postId,
+            new Date(),
+          ),
+        );
+        console.log("draft-ready alert", { postId, outcome });
+      } catch (e) {
+        console.error("draft-ready alert step failed", { postId, error: e });
+      }
     }
   }
 }

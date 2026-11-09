@@ -77,18 +77,22 @@ export const STALE_CLAIM_MS = RUN_MAX_MS + 5 * 60_000;
 
 // ---- Runners (called inside the Workflow step) ----------------------------
 
-export async function runGeneration(deps: GenDeps, run: RunRef, opts: RunOptions = {}): Promise<void> {
+/**
+ * True only when this run's final write made the post "ready" (drafts saved), so the caller can
+ * announce it. False when the run was skipped, superseded, or failed.
+ */
+export async function runGeneration(deps: GenDeps, run: RunRef, opts: RunOptions = {}): Promise<boolean> {
   const { db } = deps;
   try {
     const view = await ownedPost(db, run);
-    if (!view) return;
+    if (!view) return false;
     const { system, user } = await prepare(deps, view);
     const { output, inputTokens, outputTokens } = await deps.drafts({ system, user });
 
     const at = deps.now().toISOString();
     const draft = (channel: Channel, title: string | null, body: string, hashtags: string | null = null) =>
       insertDraftIfOwned(db, run, { channel, title, body, hashtags, createdAt: at });
-    await db.batch([
+    const results = await db.batch([
       draft("blog", output.blog.title, output.blog.body),
       draft("instagram", null, output.instagram.body, hashtagsJson(output.instagram.hashtags)),
       draft("daangn", output.daangn.title, output.daangn.body),
@@ -97,10 +101,14 @@ export async function runGeneration(deps: GenDeps, run: RunRef, opts: RunOptions
       db
         .update(posts)
         .set({ status: "ready", rewritingChannel: null, error: null, generatedAt: at, inputTokens, outputTokens })
-        .where(owned(run)),
+        .where(owned(run))
+        .returning({ id: posts.id }),
     ]);
+    // Empty when the run was superseded while Claude was writing (nothing was saved either).
+    return results[5].length > 0;
   } catch (e) {
     await handleFailure(db, run, "failed", e, opts);
+    return false;
   }
 }
 

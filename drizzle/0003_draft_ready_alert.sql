@@ -1,0 +1,1 @@
+ALTER TABLE `posts` ADD `draft_notified_at` text;

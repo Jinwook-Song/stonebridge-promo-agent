@@ -50,7 +50,7 @@ beforeEach(async () => {
   await db.delete(kakaoLink);
   await db
     .delete(settings)
-    .where(inArray(settings.key, ["alert_order_enabled", "alert_monthly_enabled", "alert_monthly_day"]));
+    .where(inArray(settings.key, ["alert_order_enabled", "alert_monthly_enabled", "alert_monthly_day", "alert_draft_ready_enabled"]));
 });
 
 afterEach(() => {
@@ -71,14 +71,24 @@ describe("kst", () => {
 
 describe("alert settings", () => {
   it("default to off, day 1", async () => {
-    expect(await getAlertSettings(db)).toEqual({ orderEnabled: false, monthlyEnabled: false, monthlyDay: 1 });
+    expect(await getAlertSettings(db)).toEqual({
+      orderEnabled: false,
+      monthlyEnabled: false,
+      monthlyDay: 1,
+      draftReadyEnabled: true,
+    });
   });
 
   it("save only the given fields", async () => {
     await saveAlertSettings(db, { orderEnabled: true, monthlyDay: 15 });
     await saveAlertSettings(db, { monthlyEnabled: true });
     await saveAlertSettings(db, { orderEnabled: false });
-    expect(await getAlertSettings(db)).toEqual({ orderEnabled: false, monthlyEnabled: true, monthlyDay: 15 });
+    expect(await getAlertSettings(db)).toEqual({
+      orderEnabled: false,
+      monthlyEnabled: true,
+      monthlyDay: 15,
+      draftReadyEnabled: true,
+    });
   });
 
   it("parseMonthlyDay accepts 1–31 only", () => {
@@ -95,6 +105,26 @@ describe("alertMessage", () => {
       expect(msg.url.startsWith(`${ORIGIN}/`)).toBe(true);
       expect(msg.url).not.toContain("//posts");
     }
+  });
+});
+
+describe("alertMessage: draft_ready", () => {
+  it("shows the first 30 characters of the memo and links to the post", () => {
+    const msg = alertMessage("draft_ready", ORIGIN, { postId: 7, memo: "가".repeat(40) });
+    expect(msg).toEqual({
+      text: "홍보글 초안이 준비됐어요\n" + "가".repeat(30) + "…",
+      url: "https://app.example/posts/7",
+      buttonTitle: "초안 보기",
+    });
+    expect([...msg.text].length).toBeLessThanOrEqual(MEMO_TEXT_LIMIT);
+  });
+
+  it("does not cut or mark a short memo, and counts code points", () => {
+    expect(alertMessage("draft_ready", `${ORIGIN}/`, { postId: 1, memo: "짧은 메모" }).text).toBe(
+      "홍보글 초안이 준비됐어요\n짧은 메모",
+    );
+    const emoji = alertMessage("draft_ready", ORIGIN, { postId: 1, memo: "🍪".repeat(31) });
+    expect(emoji.text).toBe("홍보글 초안이 준비됐어요\n" + "🍪".repeat(30) + "…");
   });
 });
 
