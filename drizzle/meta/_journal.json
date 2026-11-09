@@ -36,6 +36,13 @@
       "when": 1794195040926,
       "tag": "0004_quote_agent",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794201834616,
+      "tag": "0005_competitor_event_notes",
+      "breakpoints": true
     }
   ]
 }

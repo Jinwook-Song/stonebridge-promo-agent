@@ -104,7 +104,7 @@ const BODY_TOKEN =
   /<(div|p|span|h[1-6])\b[^>]*se-title-text[^>]*>[\s\S]*?<\/\1>|<p\b[^>]*class="[^"]*se-text-paragraph[^"]*"[^>]*>([\s\S]*?)<\/p>|class="[^"]*se-image-resource[^"]*"/g;
 
 // Zero-width space/joiners, LTR/RTL marks, bidi embeddings, word joiner, BOM.
-const INVISIBLE = /[​-‏⁠‪-‮﻿]/g;
+const INVISIBLE = /[\u200b-\u200f\u2060\u202a-\u202e\ufeff]/g;
 
 /**
  * Body text of a Naver SmartEditor post page. Empty when the page has no text paragraphs, which is

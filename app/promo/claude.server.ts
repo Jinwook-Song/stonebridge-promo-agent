@@ -92,9 +92,10 @@ const PICK_REQUEST_OPTIONS = { maxRetries: 0, timeout: 40_000 } as const;
 
 /**
  * Competitor watch: up to 10 calls run one after another inside a 5-minute Workflow step, so one
- * slow call must not use the whole step. A short extraction at low effort.
+ * slow call must not use the whole step. No SDK retries: each call billed is one counted against
+ * the run's budget (a failed post is read again next run).
  */
-const WATCH_REQUEST_OPTIONS = { maxRetries: 1, timeout: 60_000 } as const;
+const WATCH_REQUEST_OPTIONS = { maxRetries: 0, timeout: 60_000 } as const;
 
 /**
  * Real calls. API errors (network, 429, 5xx, ...) are left to propagate as the SDK's typed

@@ -275,7 +275,10 @@ export const competitorEvents = sqliteTable("competitor_events", {
   menuJson: text("menu_json"),
   quantity: integer("quantity"),
   headcount: integer("headcount"),
+  /** The whole event's price in won, as stated; never derived from a per-person price. */
   price: integer("price"),
+  /** Price or terms the post gives that fit no column (e.g. a per-person price only). */
+  notes: text("notes"),
   seenAt: text("seen_at").notNull(),
 });
 

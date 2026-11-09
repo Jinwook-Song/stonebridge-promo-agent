@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { env, type WorkflowStep } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { competitorEvents, competitorPrices, watchSources } from "../database/schema";
@@ -8,7 +8,15 @@ import { DomainError } from "../app/server/errors";
 import { buildEventRequest, buildPricesRequest, type EventExtract, type PriceExtract } from "../app/watch/extract";
 import { fetchText, htmlToText } from "../app/watch/fetch.server";
 import { parseRss } from "../app/watch/naver-blog";
-import { runWatchSource, startWatchRun, WATCH_RUN_BUDGET, type WatchDeps } from "../app/watch/run.server";
+import {
+  RSS_ITEMS_PER_RUN,
+  RSS_TIME_LIMIT_MS,
+  runWatch,
+  runWatchSource,
+  startWatchRun,
+  WATCH_RUN_BUDGET,
+  type WatchDeps,
+} from "../app/watch/run.server";
 import { deleteWatchSource, listWatchSources, saveWatchSource } from "../app/watch/sources.server";
 
 const db = getDb(env.DB);
@@ -40,6 +48,11 @@ const postHtml = (text: string) => `<html><body><div class="se-title-text"><span
 <p class="se-text-paragraph"><span>${text}</span></p></body></html>`;
 
 const EVENT_POST = "행사 후기: 가짜회사 워크숍 30명 다과 납품";
+// What m.blog.naver.com answers for a post that is not there (checked 2026-11-09: a 113-byte page
+// sending the browser to the error view; the status was 404 then, the spike saw 200).
+const DELETED_POST = `<script>
+    location.href = "/MobileErrorView.naver?errorType=noPost&amp;pushNavigation=false";
+</script>`;
 const MENU_POST = "새 메뉴 소개: 쿠키 세트";
 
 function priceHtml(aPrice: string) {
@@ -67,7 +80,10 @@ function fakeFetch(routes: Record<string, Route>) {
 const html = (body: string, status = 200) =>
   new Response(body, { status, headers: { "content-type": "text/html; charset=UTF-8" } });
 
-function fakeDeps(routes: Record<string, Route>, opts: { prices?: (text: string) => PriceExtract["packages"] } = {}) {
+function fakeDeps(
+  routes: Record<string, Route>,
+  opts: { prices?: (text: string) => PriceExtract["packages"]; clock?: () => Date } = {},
+) {
   const { f, calls: fetched } = fakeFetch(routes);
   const eventCalls: ModelRequest[] = [];
   const priceCalls: ModelRequest[] = [];
@@ -75,7 +91,7 @@ function fakeDeps(routes: Record<string, Route>, opts: { prices?: (text: string)
   const deps: WatchDeps = {
     db,
     fetch: f,
-    now: () => NOW,
+    now: opts.clock ?? (() => NOW),
     watchEvent: async (req) => {
       eventCalls.push(req);
       const text = userText(req);
@@ -91,7 +107,7 @@ function fakeDeps(routes: Record<string, Route>, opts: { prices?: (text: string)
             quantity: null,
             headcount: 30,
             price: null,
-            notes: "",
+            notes: " 1인 8,000원 ",
           }
         : { isEvent, date: "", client: "", venue: "", eventType: "", menu: [], quantity: null, headcount: null, price: null, notes: "" };
       return { output, inputTokens: 0, outputTokens: 0 };
@@ -167,6 +183,7 @@ describe("runWatchSource (rss)", () => {
       quantity: null,
       headcount: 30,
       price: null,
+      notes: "1인 8,000원",
       seenAt: NOW.toISOString(),
     });
     expect(await source(id)).toMatchObject({
@@ -257,14 +274,79 @@ describe("runWatchSource (rss)", () => {
     expect(row.lastError).toContain("503");
   });
 
-  it("skips a deleted Naver post (200 with no paragraphs) without calling Claude", async () => {
-    const id = await addSource("rss", { lastSeenKey: "102" });
-    const routes = { ...feedRoutes(), [postUrl("103")]: () => html("<html><body><script>alert('삭제된 글')</script></body></html>") };
+  it("skips a deleted Naver post (200 with Naver's error-page marker) without calling Claude", async () => {
+    const id = await addSource("rss", { lastSeenKey: "101" });
+    const routes = { ...feedRoutes(), [postUrl("102")]: () => html(DELETED_POST) };
     const { deps, eventCalls } = fakeDeps(routes);
 
-    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 0, added: 0, status: "ok" });
-    expect(eventCalls).toHaveLength(0);
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 1, added: 0, status: "ok" });
+    expect(eventCalls).toHaveLength(1);
     expect((await source(id)).lastSeenKey).toBe("103");
+  });
+
+  it("errors (keys moved past) when every post read this run was deleted", async () => {
+    const id = await addSource("rss", { lastSeenKey: "102" });
+    const routes = { ...feedRoutes(), [postUrl("103")]: () => html(DELETED_POST) };
+    const { deps, eventCalls } = fakeDeps(routes);
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 0, added: 0, status: "error" });
+    expect(eventCalls).toHaveLength(0);
+    expect(await source(id)).toMatchObject({ lastSeenKey: "103", lastStatus: "error" });
+  });
+
+  it("errors and keeps the key on a 200 page with no paragraphs and no deleted marker (a block page)", async () => {
+    const id = await addSource("rss", { lastSeenKey: "101" });
+    const routes = { ...feedRoutes(), [postUrl("102")]: () => html("<html><body><form>자동입력 방지</form></body></html>") };
+    const { deps, eventCalls } = fakeDeps(routes);
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 0, added: 0, status: "error" });
+    expect(eventCalls).toHaveLength(0);
+    expect(await source(id)).toMatchObject({ lastSeenKey: "101", lastStatus: "error" });
+  });
+
+  it.each([404, 410])("skips a post that answers %i and moves the key past it", async (status) => {
+    const id = await addSource("rss", { lastSeenKey: "101" });
+    const routes = { ...feedRoutes(), [postUrl("102")]: () => new Response("gone", { status }) };
+    const { deps } = fakeDeps(routes);
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 1, added: 0, status: "ok" });
+    expect((await source(id)).lastSeenKey).toBe("103");
+  });
+
+  it("keeps the key before a post that answers 429", async () => {
+    const id = await addSource("rss", { lastSeenKey: "101" });
+    const routes = { ...feedRoutes(), [postUrl("102")]: () => new Response("slow down", { status: 429 }) };
+    const { deps } = fakeDeps(routes);
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 0, added: 0, status: "error" });
+    expect(await source(id)).toMatchObject({ lastSeenKey: "101", lastStatus: "error" });
+    expect((await source(id)).lastError).toContain("429");
+  });
+
+  it("orders the feed by pubDate, so an oldest-first feed is read the same way", async () => {
+    const id = await addSource("rss", { lastSeenKey: "101" });
+    const feed = `<rss><channel>
+<item><title>글 101</title><link>https://blog.naver.com/demo-rival/101</link><pubDate>Fri, 30 Oct 2026 10:00:00 +0900</pubDate></item>
+<item><title>글 102</title><link>https://blog.naver.com/demo-rival/102</link><pubDate>Sat, 31 Oct 2026 10:00:00 +0900</pubDate></item>
+<item><title>글 103</title><link>https://blog.naver.com/demo-rival/103</link><pubDate>Sun, 01 Nov 2026 10:00:00 +0900</pubDate></item>
+</channel></rss>`;
+    const { deps, fetched } = fakeDeps({ ...feedRoutes(), [FEED_URL]: () => new Response(feed) });
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 2, added: 1, status: "ok" });
+    expect(fetched.slice(1)).toEqual([postUrl("102"), postUrl("103")]);
+    expect((await source(id)).lastSeenKey).toBe("103");
+  });
+
+  it("stops taking posts near the step timeout and keeps what it did", async () => {
+    const id = await addSource("rss", { lastSeenKey: "101" });
+    // Each read of the clock moves it on by more than the limit.
+    let t = NOW.getTime();
+    const clock = () => new Date((t += RSS_TIME_LIMIT_MS / 2 + 1));
+    const { deps, eventCalls } = fakeDeps(feedRoutes(), { clock });
+
+    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 1, added: 1, status: "ok" });
+    expect(eventCalls).toHaveLength(1);
+    expect((await source(id)).lastSeenKey).toBe("102");
   });
 
   it("errors when the feed has no items (an error page or a changed format)", async () => {
@@ -397,14 +479,32 @@ describe("runWatchSource (page)", () => {
     expect(await runWatchSource(up.deps, id, WATCH_RUN_BUDGET, later(1))).toEqual({ claudeCalls: 1, added: 2, status: "ok" });
   });
 
-  it("errors and keeps no rows when no package is found", async () => {
+  it("errors and keeps no rows when no package is found, and does not ask again for the same text", async () => {
     const id = await addSource("page");
-    const { deps } = fakeDeps({ [PRICE_URL]: () => html("<p>잠시 후 다시 시도해 주세요</p>") }, { prices: () => [] });
-    expect(await runWatchSource(deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 1, added: 0, status: "error" });
+    const page = () => html("<p>가격표는 사진으로 봐 주세요</p><img src=x>");
+    const first = fakeDeps({ [PRICE_URL]: page }, { prices: () => [] });
+    expect(await runWatchSource(first.deps, id, WATCH_RUN_BUDGET, NOW)).toEqual({ claudeCalls: 1, added: 0, status: "error" });
     const row = await source(id);
-    expect(row.contentHash).toBeNull();
+    expect(row.contentHash).toMatch(/^[0-9a-f]{64}$/);
     expect(row.lastStatus).toBe("error");
     expect(await priceRows()).toHaveLength(0);
+
+    const again = fakeDeps({ [PRICE_URL]: page }, { prices: () => [] });
+    expect(await runWatchSource(again.deps, id, WATCH_RUN_BUDGET, later(8))).toEqual({ claudeCalls: 0, added: 0, status: "error" });
+    expect(again.priceCalls).toHaveLength(0);
+    expect(await source(id)).toMatchObject({ lastStatus: "error", lastError: row.lastError, lastRunAt: later(8).toISOString() });
+  });
+
+  it("does not keep an old fetch error when the unchanged page loads again", async () => {
+    const id = await addSource("page");
+    const ok = fakeDeps({ [PRICE_URL]: () => html(priceHtml("10,000원")) });
+    await runWatchSource(ok.deps, id, WATCH_RUN_BUDGET, NOW);
+    const down = fakeDeps({ [PRICE_URL]: () => html("down", 503) });
+    expect(await runWatchSource(down.deps, id, WATCH_RUN_BUDGET, later(8))).toMatchObject({ status: "error" });
+
+    const back = fakeDeps({ [PRICE_URL]: () => html(priceHtml("10,000원")) });
+    expect(await runWatchSource(back.deps, id, WATCH_RUN_BUDGET, later(9))).toEqual({ claudeCalls: 0, added: 0, status: "ok" });
+    expect((await source(id)).lastError).toBeNull();
   });
 
   it("does not call Claude or keep the new hash without budget", async () => {
@@ -453,6 +553,8 @@ describe("htmlToText", () => {
   it("drops scripts, styles and tags and tidies whitespace", () => {
     expect(htmlToText(priceHtml("10,000원"))).toBe("패키지 | 1인\nA 다과 | 10,000원\nB 도시락 | 12,000원");
     expect(htmlToText("<p>A&amp;B&nbsp; <b>굵게</b></p><!-- 주석 --><p>둘째</p>")).toBe("A&B 굵게\n둘째");
+    // A raw tab is plain whitespace, not a cell break.
+    expect(htmlToText("<p>가\t나</p><table><tr><td>a\tb</td><td>c</td></tr></table>")).toBe("가 나\na b | c");
   });
 });
 
@@ -563,5 +665,73 @@ describe("startWatchRun", () => {
   it("throws other start errors", async () => {
     const { wf } = fakeWorkflow(new Set(), new Error("binding down"));
     await expect(startWatchRun(wf, NOW)).rejects.toThrow("binding down");
+  });
+});
+
+// ---- Daily run (Workflow loop) -------------------------------------------------------------
+
+describe("runWatch", () => {
+  /** Runs each step like Workflows: up to retries.limit + 1 attempts, then the last error. */
+  function fakeStep() {
+    const names: string[] = [];
+    const step = {
+      do: async (name: string, config: { retries?: { limit: number } }, fn: () => Promise<unknown>) => {
+        names.push(name);
+        const attempts = (config.retries?.limit ?? 0) + 1;
+        let last: unknown;
+        for (let i = 0; i < attempts; i++) {
+          try {
+            return await fn();
+          } catch (e) {
+            last = e;
+          }
+        }
+        throw last;
+      },
+    } as unknown as Pick<WorkflowStep, "do">;
+    return { step, names };
+  }
+
+  it("shares the budget across sources and keeps going after a source's step fails for good", async () => {
+    const a = await addSource("rss", { lastSeenKey: "101" });
+    const b = await addSource("page");
+    const { deps, eventCalls, priceCalls } = fakeDeps({ ...feedRoutes(), [PRICE_URL]: () => html(priceHtml("10,000원")) });
+    const { step, names } = fakeStep();
+    // Source a's step throws on every attempt (its D1 read fails before runWatchSource can record
+    // anything); b's does not.
+    let aAttempts = 0;
+    const failing: WatchDeps = {
+      ...deps,
+      db: new Proxy(db, {
+        get(target, prop, receiver) {
+          if (prop === "select" && names.at(-1) === `source-${a}`) {
+            aAttempts += 1;
+            throw new Error("D1 unavailable");
+          }
+          return Reflect.get(target, prop, receiver) as unknown;
+        },
+      }),
+    };
+
+    const result = await runWatch(step, failing, [a, b], NOW);
+
+    expect(names).toEqual([`source-${a}`, `source-${b}`]);
+    expect(aAttempts).toBe(2); // first try + one retry
+    expect(eventCalls).toHaveLength(0);
+    expect(priceCalls).toHaveLength(1);
+    // a's failed step counts pessimistically as RSS_ITEMS_PER_RUN calls.
+    expect(result).toEqual({ remaining: WATCH_RUN_BUDGET - RSS_ITEMS_PER_RUN - 1 });
+  });
+
+  it("passes what is left of the budget to the next source", async () => {
+    const a = await addSource("rss", { lastSeenKey: "101" });
+    const b = await addSource("rss", { url: "https://rss.blog.naver.com/demo-rival-2.xml", lastSeenKey: "101" });
+    const routes = { ...feedRoutes(), "https://rss.blog.naver.com/demo-rival-2.xml": feedRoutes()[FEED_URL]! };
+    const { deps, eventCalls } = fakeDeps(routes);
+    const { step } = fakeStep();
+
+    expect(await runWatch(step, deps, [a, b], NOW, 3)).toEqual({ remaining: 0 });
+    expect(eventCalls).toHaveLength(3);
+    expect((await source(b)).lastSeenKey).toBe("102");
   });
 });

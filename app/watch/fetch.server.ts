@@ -70,6 +70,8 @@ export function htmlToText(html: string): string {
     html
       .replace(/<!--[\s\S]*?-->/g, "")
       .replace(DROPPED_ELEMENTS, "")
+      // Tabs in the page are plain spacing; only CELL_END makes a cell break.
+      .replace(/\t/g, " ")
       .replace(CELL_END, "\t")
       .replace(BLOCK_TAG, "\n")
       .replace(/<[^>]*>/g, ""),
@@ -79,7 +81,7 @@ export function htmlToText(html: string): string {
     .map((line) =>
       line
         .split("\t")
-        .map((cell) => cell.replace(/[ \f\v ​﻿]+/g, " ").trim())
+        .map((cell) => cell.replace(/[ \f\v\u00a0\u200b\ufeff]+/g, " ").trim())
         .filter((cell) => cell !== "")
         .join(" | "),
     )

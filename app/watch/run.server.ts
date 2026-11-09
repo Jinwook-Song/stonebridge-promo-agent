@@ -8,6 +8,7 @@ import {
   type WatchEventCall,
   type WatchPricesCall,
 } from "../promo/claude.server";
+import type { WorkflowStep } from "cloudflare:workers";
 import type { Db } from "../server/db";
 import { buildEventRequest, buildPricesRequest, type EventExtract, type PriceExtract } from "./extract";
 import { fetchText, htmlToText } from "./fetch.server";
@@ -24,7 +25,12 @@ export const WATCH_RUN_BUDGET = 30;
 export const WATCH_CRON = "0 18 * * *";
 
 /** New feed posts read per source per run. */
-const RSS_ITEMS_PER_RUN = 10;
+export const RSS_ITEMS_PER_RUN = 10;
+/**
+ * An RSS source stops taking new posts after this long, so its 5-minute Workflow step ends on its
+ * own (with what it did saved) instead of timing out and being retried.
+ */
+export const RSS_TIME_LIMIT_MS = 210_000;
 /** A price page is read once a week. */
 const PAGE_INTERVAL_MS = 7 * 24 * 3600_000;
 const MAX_ERROR_CHARS = 200;
@@ -40,8 +46,21 @@ export type WatchDeps = {
 export type WatchRunResult = { claudeCalls: number; added: number; status: "ok" | "error" | "skipped" };
 
 type Progress = { claudeCalls: number; added: number };
-/** Run state a successful read stores besides lastRunAt/lastStatus. */
+/** Run state a read stores besides lastRunAt/lastStatus/lastError. */
 type Done = { contentHash?: string };
+
+/** A source error that also stores run state (the hash of a page with no prices). */
+class SourceError extends Error {
+  constructor(
+    message: string,
+    readonly done: Done = {},
+  ) {
+    super(message);
+  }
+}
+
+/** Stored as lastError for a page whose text has no prices (e.g. an image-only price list). */
+const NO_PRICES = "페이지에서 가격을 찾지 못했어요";
 
 /**
  * Reads one source and stores what is new. Never throws for a broken source: the error goes to
@@ -81,22 +100,45 @@ export async function runWatchSource(
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.warn("watch source failed", { sourceId, error: message });
+    const done = e instanceof SourceError ? e.done : {};
     await deps.db
       .update(watchSources)
-      .set({ lastRunAt: now.toISOString(), lastStatus: "error", lastError: message.slice(0, MAX_ERROR_CHARS) })
+      .set({ ...done, lastRunAt: now.toISOString(), lastStatus: "error", lastError: message.slice(0, MAX_ERROR_CHARS) })
       .where(eq(watchSources.id, source.id));
     return { ...progress, status: "error" };
   }
 }
 
-/** Body text of a page, or an error naming the HTTP status. */
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    url: string,
+  ) {
+    super(`가져오지 못했어요 (HTTP ${status}) ${url}`);
+  }
+}
+
+/** Body text of a page, or an HttpError naming the status. */
 async function fetchOk(deps: WatchDeps, url: string): Promise<string> {
   const { status, text } = await fetchText(url, deps.fetch);
-  if (status < 200 || status >= 300) throw new Error(`가져오지 못했어요 (HTTP ${status}) ${url}`);
+  if (status < 200 || status >= 300) throw new HttpError(status, url);
   return text;
 }
 
 // ---- RSS -----------------------------------------------------------------------------------
+
+/**
+ * Newest first by pubDate; the feed's own order when any date is missing or unreadable (a stable
+ * sort keeps that order for equal dates).
+ */
+function newestFirst(items: RssItem[]): RssItem[] {
+  const times = items.map((i) => Date.parse(i.pubDate));
+  if (times.some((t) => Number.isNaN(t))) return items;
+  return items
+    .map((item, index) => ({ item, time: times[index]! }))
+    .sort((a, b) => b.time - a.time)
+    .map((x) => x.item);
+}
 
 const isNumber = (key: string) => /^\d+$/.test(key);
 /** Compares Naver post numbers as numbers (they outgrow 2^53 only far in the future). */
@@ -118,16 +160,46 @@ function newItems(items: RssItem[], lastSeenKey: string | null): RssItem[] {
 }
 
 /**
- * Visible text of a post or page; "" when it has none (a deleted Naver post still answers 200).
- * A Naver blog link is a frameset, so its post is read from the mobile PostView page.
+ * What m.blog.naver.com answers for a post that is not there: a tiny page that sends the browser
+ * to `/MobileErrorView.naver?errorType=noPost` (checked 2026-11-09; HTTP 404 then, the spike saw a
+ * 200 page). A block or captcha page has no paragraphs either, but not this.
+ */
+const NAVER_GONE = /MobileErrorView\.naver/;
+
+/** Statuses after which a post will not come back; anything else (429, 5xx) is retried. */
+const GONE_STATUSES = new Set([404, 410]);
+
+/** Thrown for a post that no longer exists; the post is skipped. */
+class PostGone extends Error {}
+
+/**
+ * Visible text of a post or page. A Naver blog link is a frameset, so its post is read from the
+ * mobile PostView page.
  */
 async function pageText(deps: WatchDeps, url: string): Promise<string> {
   const naver = naverPost(url);
-  if (naver) {
-    const postView = `https://m.blog.naver.com/PostView.naver?blogId=${encodeURIComponent(naver.blogId)}&logNo=${naver.logNo}`;
-    return parsePostHtml(await fetchOk(deps, postView));
+  if (!naver) return htmlToText(await fetchOk(deps, url));
+  const postView = `https://m.blog.naver.com/PostView.naver?blogId=${encodeURIComponent(naver.blogId)}&logNo=${naver.logNo}`;
+  const html = await fetchOk(deps, postView);
+  const text = parsePostHtml(html);
+  if (text === "" && NAVER_GONE.test(html)) throw new PostGone(`글이 없어요 ${url}`);
+  return text;
+}
+
+/**
+ * Text of a feed post. PostGone for a deleted post (404/410, or Naver's not-found page). An empty
+ * page without that sign (a block or captcha page answering 200) is an error, so the key stays.
+ */
+async function postText(deps: WatchDeps, url: string): Promise<string> {
+  let text: string;
+  try {
+    text = await pageText(deps, url);
+  } catch (e) {
+    if (e instanceof HttpError && GONE_STATUSES.has(e.status)) throw new PostGone(e.message);
+    throw e;
   }
-  return htmlToText(await fetchOk(deps, url));
+  if (text === "") throw new Error(`글 본문을 찾지 못했어요 ${url}`);
+  return text;
 }
 
 async function runRss(
@@ -141,18 +213,33 @@ async function runRss(
   // An error page, a login wall or a changed format reads as no items; say so instead of "ok".
   if (items.length === 0) throw new Error("피드에서 글을 찾지 못했어요");
 
-  for (const item of newItems(items, source.lastSeenKey)) {
+  const started = deps.now().getTime();
+  let read = 0;
+  let gone = 0;
+  for (const item of newItems(newestFirst(items), source.lastSeenKey)) {
     if (progress.claudeCalls >= budget) break;
+    if (deps.now().getTime() - started >= RSS_TIME_LIMIT_MS) break;
+    read += 1;
     // A failed fetch throws before lastSeenKey moves past this post, so the next run reads it again.
-    const text = await pageText(deps, item.url);
-    if (text !== "") {
+    let text: string | null = null;
+    try {
+      text = await postText(deps, item.url);
+    } catch (e) {
+      if (!(e instanceof PostGone)) throw e;
+      console.warn("watch post gone, skipped", { sourceId: source.id, error: e.message });
+      gone += 1;
+    }
+    if (text !== null) {
       progress.claudeCalls += 1;
-      const extract = await extractOrSkip(() => deps.watchEvent(buildEventRequest(item, text)));
+      const post = text;
+      const extract = await extractOrSkip(() => deps.watchEvent(buildEventRequest(item, post)));
       if (extract?.isEvent) progress.added += await saveEvent(deps.db, source.id, item.url, extract, now);
     }
     // Per post, so a step timeout or a later failure does not read it again.
     await deps.db.update(watchSources).set({ lastSeenKey: item.key }).where(eq(watchSources.id, source.id));
   }
+  // Every post gone at once looks more like a block than like deletions: tell the owner.
+  if (read > 0 && gone === read) throw new Error(`읽은 글 ${read}개가 모두 없는 글이었어요`);
   return {};
 }
 
@@ -182,11 +269,12 @@ async function saveEvent(db: Db, sourceId: number, url: string, e: EventExtract,
     menu: cleanList(e.menu),
     quantity: positiveOrNull(e.quantity),
     headcount: positiveOrNull(e.headcount),
-    // The event total; a per-person-only price stays in the extract's notes (not stored).
+    // The event total; a per-person-only price is in notes.
     price: positiveOrNull(e.price),
+    notes: textOrNull(e.notes),
   };
   // "An event" with nothing known about it is noise in the comparison.
-  const known = [row.date, row.client, row.venue, row.eventType, row.quantity, row.headcount, row.price];
+  const known = [row.date, row.client, row.venue, row.eventType, row.quantity, row.headcount, row.price, row.notes];
   if (row.menu.length === 0 && known.every((v) => v === null)) return 0;
 
   const inserted = await db
@@ -202,6 +290,7 @@ async function saveEvent(db: Db, sourceId: number, url: string, e: EventExtract,
       quantity: row.quantity,
       headcount: row.headcount,
       price: row.price,
+      notes: row.notes,
       seenAt: now.toISOString(),
     })
     .onConflictDoNothing({ target: competitorEvents.sourceUrl })
@@ -229,7 +318,11 @@ async function runPage(
   if (text === "") throw new Error("페이지에 글자가 없어요");
   // The visible text, not the HTML: scripts and tokens change on every load.
   const contentHash = await sha256Hex(text);
-  if (contentHash === source.contentHash) return { contentHash };
+  if (contentHash === source.contentHash) {
+    // Same text as when no prices were found: still none, and asking again costs a call a day.
+    if (source.lastStatus === "error" && source.lastError === NO_PRICES) throw new SourceError(NO_PRICES, { contentHash });
+    return { contentHash };
+  }
 
   progress.claudeCalls += 1;
   const { output } = await deps.watchPrices(buildPricesRequest(source.url, text));
@@ -238,8 +331,8 @@ async function runPage(
     const name = p.name.trim();
     if (name !== "" && !packages.has(name)) packages.set(name, { ...p, name });
   }
-  // Keep the hash unset so the next run reads the page again.
-  if (packages.size === 0) throw new Error("페이지에서 가격을 찾지 못했어요");
+  // The hash is kept so the same text is not sent again; a changed page is.
+  if (packages.size === 0) throw new SourceError(NO_PRICES, { contentHash });
 
   for (const p of packages.values()) {
     const next = {
@@ -271,6 +364,40 @@ async function runPage(
     progress.added += 1;
   }
   return { contentHash };
+}
+
+// ---- Daily run -----------------------------------------------------------------------------
+
+/**
+ * The Workflow's loop: each source in its own step, sharing one Claude budget. A step that fails
+ * for good (both attempts) is logged and the next source runs; since its calls are unknown, it
+ * counts as the most one source may make.
+ */
+export async function runWatch(
+  step: Pick<WorkflowStep, "do">,
+  deps: WatchDeps,
+  sourceIds: number[],
+  now: Date,
+  budget: number = WATCH_RUN_BUDGET,
+): Promise<{ remaining: number }> {
+  let remaining = budget;
+  for (const id of sourceIds) {
+    const left = remaining;
+    try {
+      // runWatchSource records a broken source and returns; the retry covers an unexpected throw.
+      const result = await step.do(
+        `source-${id}`,
+        { retries: { limit: 1, delay: "30 seconds" }, timeout: "5 minutes" },
+        () => runWatchSource(deps, id, left, now),
+      );
+      remaining = Math.max(0, remaining - result.claudeCalls);
+      console.log(`watch source ${id}: ${result.status}, ${result.claudeCalls} calls, ${result.added} added`);
+    } catch (e) {
+      remaining -= Math.min(remaining, RSS_ITEMS_PER_RUN);
+      console.error("watch source step failed", { sourceId: id, error: e });
+    }
+  }
+  return { remaining };
 }
 
 // ---- Start and real dependencies -----------------------------------------------------------

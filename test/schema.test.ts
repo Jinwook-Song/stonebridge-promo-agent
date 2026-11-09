@@ -117,10 +117,16 @@ describe("schema", () => {
       expect(src).toMatchObject({ enabled: true, lastStatus: null, memo: "" });
 
       await db.insert(competitorEvents).values({ sourceId: src.id, sourceUrl: "https://example.test/e/1", seenAt: now });
+      // 0005: notes column, nullable.
+      await db
+        .insert(competitorEvents)
+        .values({ sourceId: src.id, sourceUrl: "https://example.test/e/2", notes: "1인 8,000원", seenAt: now });
+      const notes = await db.select({ notes: competitorEvents.notes }).from(competitorEvents).where(eq(competitorEvents.sourceId, src.id));
+      expect(notes.map((n) => n.notes).sort()).toEqual(["1인 8,000원", null]);
       await db
         .insert(competitorPrices)
         .values({ sourceId: src.id, sourceUrl: "https://example.test/p", packageName: "pkg", perPerson: 20000, seenAt: now });
-      expect(await db.select().from(competitorEvents).where(eq(competitorEvents.sourceId, src.id))).toHaveLength(1);
+      expect(await db.select().from(competitorEvents).where(eq(competitorEvents.sourceId, src.id))).toHaveLength(2);
       expect(await db.select().from(competitorPrices).where(eq(competitorPrices.sourceId, src.id))).toHaveLength(1);
     });
 
