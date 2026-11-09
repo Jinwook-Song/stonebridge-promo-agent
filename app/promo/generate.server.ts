@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { and, eq, exists, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { drafts, photos, posts } from "../../database/schema";
+import { toBase64 } from "../lib/base64";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
 import {
@@ -372,15 +373,6 @@ function isUsableOrigin(origin: string): boolean {
     return false;
   }
   return url.protocol === "https:" && url.hostname !== "" && !url.hostname.split(".").includes("example");
-}
-
-export function toBase64(bytes: Uint8Array): string {
-  // Chunked: spreading a whole photo into fromCharCode overflows the call stack.
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  }
-  return btoa(binary);
 }
 
 export function makeGenDeps(env: Env, db: Db): GenDeps {

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { GenerationError, makeFakeClaudeCalls, type PickCall } from "../app/promo/claude.server";
 import { buildPickRequest, cleanPicks, pickPhotos, type PhotoPickOutput } from "../app/promo/photo-pick.server";
 import { MAX_PICK_CANDIDATES, MAX_THUMB_BYTES } from "../app/promo/types";
-import { handlePhotoPick } from "../app/routes/api.photo-pick";
+import { handlePhotoPick } from "../app/promo/photo-pick-route.server";
 
 // Synthetic bytes labelled as JPEG: the stub calls never decode them.
 const TINY = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
@@ -175,6 +175,20 @@ describe("POST /api/photo-pick", () => {
     const res = await handlePhotoPick(pickForm([thumb(), thumb()]), { pick });
     expect(res.status).toBe(502);
     expect(await res.json()).toEqual({ error: new GenerationError("refusal").message });
+  });
+
+  it("returns 502 with the manual-pick message when no pick is usable", async () => {
+    const pick = stub({ picks: [{ n: 0, reason: "x" }, { n: 3, reason: "y" }] });
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await handlePhotoPick(pickForm([thumb(), thumb()]), { pick });
+      expect(res.status).toBe(502);
+      expect(await res.json()).toEqual({ error: "사진 고르기에 실패했어요. 직접 골라 주세요." });
+    } finally {
+      info.mockRestore();
+      err.mockRestore();
+    }
   });
 
   it("maps an unknown failure to 502 with the manual-pick message", async () => {

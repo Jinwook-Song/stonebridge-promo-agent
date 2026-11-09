@@ -1,12 +1,8 @@
+import { toBase64 } from "./base64";
+
 const ITERATIONS = 100_000; // Workers caps PBKDF2 at 100,000
 const SALT_BYTES = 16;
 const HASH_BYTES = 32;
-
-function toBase64(bytes: Uint8Array): string {
-  let s = "";
-  for (const b of bytes) s += String.fromCharCode(b);
-  return btoa(s);
-}
 
 function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
   const s = atob(b64);
