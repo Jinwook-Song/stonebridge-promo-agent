@@ -83,6 +83,7 @@ const report = [
   "",
   `- 글 종류: ${kind}`,
   `- 메모(실제 글 제목): ${memo}`,
+  "- 조건: 사진 없음, 메모 = 실제 글 제목만. 실제 사용보다 사실이 적어서 글이 짧거나 일반적일 수 있다.",
   `- 예시: ${CHANNELS.map((c) => `${c} ${examples[c].length}`).join(", ")} (이 글 제외)`,
   `- 토큰: 입력 ${inputTokens}, 출력 ${outputTokens}, 약 $${cost.toFixed(3)}`,
   "",
