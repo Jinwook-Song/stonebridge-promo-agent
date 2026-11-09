@@ -1,5 +1,9 @@
 import { ExternalLinkIcon } from "lucide-react";
+import { useState } from "react";
+import { Link } from "react-router";
 import { Badge } from "../../components/ui/badge";
+import { cn } from "../../lib/utils";
+import { comparisonGroups, PANEL_LIMIT, visibleRows, type PanelGroup } from "../comparison-view";
 import type { Comparison, ComparisonRow } from "../types";
 
 const KIND: Record<ComparisonRow["kind"], { label: string; variant: "info" | "muted" | "warning" }> = {
@@ -17,9 +21,9 @@ function day(iso: string): string {
 const isWebUrl = (url: string) => /^https?:\/\//i.test(url);
 
 /**
- * Past own quotes first, then competitor prices, then competitor events (the order the rows are
- * stored in). The AI's note is shown only together with its rows: a note with nothing under it
- * would be a claim without a source.
+ * What the AI was shown when it made this version: past own quotes, competitor prices, competitor
+ * events, up to PANEL_LIMIT of each until "더 보기". Rows the AI's note rests on are marked
+ * "근거" and listed first. The note is stored only when it cites at least one of these rows.
  */
 export function ComparisonPanel({ comparison }: { comparison: Comparison | null }) {
   if (!comparison || comparison.rows.length === 0) {
@@ -28,13 +32,41 @@ export function ComparisonPanel({ comparison }: { comparison: Comparison | null 
   return (
     <div className="flex flex-col gap-3">
       {comparison.notes.trim() !== "" && <p className="text-sm leading-relaxed break-keep">{comparison.notes}</p>}
+      {comparisonGroups(comparison).map((group) => (
+        <KindGroup key={group.kind} group={group} />
+      ))}
+    </div>
+  );
+}
+
+function KindGroup({ group }: { group: PanelGroup }) {
+  const [expanded, setExpanded] = useState(false);
+  const hidden = group.rows.length - PANEL_LIMIT;
+  return (
+    <div className="flex flex-col gap-1">
       <ul className="flex flex-col divide-y rounded-lg border bg-card">
-        {comparison.rows.map((row) => (
-          <li key={row.id} className="flex flex-col gap-1 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3">
-            <Badge variant={KIND[row.kind].variant} className="self-start">
-              {KIND[row.kind].label}
-            </Badge>
-            <p className="min-w-0 flex-1 text-sm break-words">{row.label}</p>
+        {visibleRows(group, expanded).map((row) => (
+          <li
+            key={row.id}
+            className={cn(
+              "flex flex-col gap-1 px-3 py-2.5 sm:flex-row sm:items-center sm:gap-3",
+              row.cited && "bg-primary/5",
+            )}
+          >
+            <div className="flex shrink-0 items-center gap-1 self-start">
+              <Badge variant={KIND[row.kind].variant}>{KIND[row.kind].label}</Badge>
+              {row.cited && <Badge>근거</Badge>}
+            </div>
+            {row.href ? (
+              <Link
+                to={row.href}
+                className="flex min-h-11 min-w-0 flex-1 items-center text-sm break-words text-primary underline underline-offset-2 sm:min-h-0"
+              >
+                {row.label || "견적"}
+              </Link>
+            ) : (
+              <p className="min-w-0 flex-1 text-sm break-words">{row.label}</p>
+            )}
             <p className="shrink-0 text-sm font-medium tabular-nums">
               {row.perPerson === null ? "—" : `1인 ${row.perPerson.toLocaleString("ko-KR")}원`}
             </p>
@@ -55,6 +87,16 @@ export function ComparisonPanel({ comparison }: { comparison: Comparison | null 
           </li>
         ))}
       </ul>
+      {hidden > 0 && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+          className="flex min-h-11 items-center self-start text-sm text-primary underline underline-offset-2"
+        >
+          {expanded ? "접기" : `${KIND[group.kind].label} 더 보기 (${hidden}개)`}
+        </button>
+      )}
     </div>
   );
 }

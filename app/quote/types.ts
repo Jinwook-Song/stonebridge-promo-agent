@@ -76,7 +76,11 @@ export type ComparisonRow = {
   seenAt: string | null;
 };
 
-export type Comparison = { notes: string; rows: ComparisonRow[] };
+/**
+ * `rows`: every candidate the model was shown, as it was shown (later watch runs do not change it).
+ * `citedIds`: the rows the AI's `notes` rest on. Versions stored before citedIds read as [].
+ */
+export type Comparison = { notes: string; rows: ComparisonRow[]; citedIds: string[] };
 
 // These validate JSON read back from D1 columns and form input. They are not used for structured
 // output, so min/max are fine here.
@@ -131,4 +135,5 @@ export const ComparisonRowSchema = z.object({
 export const ComparisonSchema = z.object({
   notes: z.string(),
   rows: z.array(ComparisonRowSchema),
+  citedIds: z.array(z.string()).default([]),
 });

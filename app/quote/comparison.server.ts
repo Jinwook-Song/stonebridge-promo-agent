@@ -10,7 +10,12 @@ const PER_KIND = 10;
 /** Rows read per group before ranking; ranking is done in code. */
 const POOL = 200;
 
-type Target = Pick<QuoteEvent, "eventType" | "headcount">;
+/**
+ * What the candidates are ranked against. `perPerson`: the quote's own per-person supply price when
+ * known (a revision: the previous version's supply ÷ headcount); competitor packages nearest to it
+ * come first.
+ */
+export type Target = Pick<QuoteEvent, "eventType" | "headcount"> & { perPerson?: number | null };
 
 /** Words of 2+ characters, lower-cased: "기업 워크숍/다과" → ["기업", "워크숍", "다과"]. */
 function words(text: string): string[] {
@@ -41,15 +46,15 @@ function makeScorer(eventType: string, text: string | undefined): Scorer {
   return (candidate) => [...new Set(words(candidate))].filter((w) => inquiry.includes(w)).length;
 }
 
-/** 0 = same headcount; larger = further apart (ratio). Unknown on either side sorts last. */
-function headcountDistance(target: number | null, other: number | null): number {
+/** 0 = same number; larger = further apart (ratio). Unknown on either side sorts last. */
+function ratioDistance(target: number | null | undefined, other: number | null): number {
   if (!target || !other || target <= 0 || other <= 0) return Number.POSITIVE_INFINITY;
   return Math.abs(Math.log(other / target));
 }
 
 type Ranked = { row: ComparisonRow; score: number; distance: number; at: string };
 
-/** More matched words first, then closest headcount, then newest. */
+/** More matched words first, then closest (headcount, or per-person price for packages), then newest. */
 function rank(items: Ranked[]): ComparisonRow[] {
   return items
     .sort((a, b) => b.score - a.score || a.distance - b.distance || (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
@@ -109,15 +114,23 @@ async function ownRows(db: Db, target: Target, score: Scorer, excludeQuoteId: nu
           seenAt: r.createdAt,
         },
         score: score(event?.eventType ?? ""),
-        distance: headcountDistance(target.headcount, headcount),
+        distance: ratioDistance(target.headcount, headcount),
         at: r.createdAt,
       };
     }),
   );
 }
 
-/** The newest row of each (source, package). */
-async function priceRows(db: Db, score: Scorer) {
+/**
+ * A package's item list counts as one matched word at most, so a long list cannot outrank a
+ * package whose name matches.
+ */
+function packageScore(score: Scorer, packageName: string, itemsJson: string | null): number {
+  return score(packageName) + Math.min(1, score(itemsJson ?? ""));
+}
+
+/** The newest row of each (source, package). With no target price every distance is the same. */
+async function priceRows(db: Db, target: Target, score: Scorer) {
   const newest = sql`${competitorPrices.id} = (SELECT p2.id FROM ${competitorPrices} p2
     WHERE p2.source_id = ${competitorPrices.sourceId} AND p2.package_name = ${competitorPrices.packageName}
     ORDER BY p2.seen_at DESC, p2.id DESC LIMIT 1)`;
@@ -148,8 +161,8 @@ async function priceRows(db: Db, score: Scorer) {
           sourceUrl: r.sourceUrl,
           seenAt: r.seenAt,
         },
-        score: score(`${r.packageName} ${r.itemsJson ?? ""}`),
-        distance: 0,
+        score: packageScore(score, r.packageName, r.itemsJson),
+        distance: target.perPerson == null ? 0 : ratioDistance(target.perPerson, r.perPerson),
         at: r.seenAt,
       }),
     ),
@@ -188,7 +201,7 @@ async function eventRows(db: Db, target: Target, score: Scorer) {
           seenAt: r.seenAt,
         },
         score: score(r.eventType ?? ""),
-        distance: headcountDistance(target.headcount, r.headcount),
+        distance: ratioDistance(target.headcount, r.headcount),
         at: r.date ?? r.seenAt,
       };
     }),
@@ -199,8 +212,9 @@ async function eventRows(db: Db, target: Target, score: Scorer) {
  * Up to 30 rows the model may cite: the owner's quotes (with a ready version, except
  * `excludeQuoteId`), then the latest price of each competitor package, then competitor events,
  * at most 10 each. Within each group, rows whose type shares words with `event.eventType` (or,
- * when that is empty, with `opts.text`, the pasted inquiry) come first. Empty tables give fewer
- * rows (or none); this never blocks a quote.
+ * when that is empty, with `opts.text`, the pasted inquiry) come first; packages then go by how
+ * close their per-person price is to `event.perPerson`. Empty tables give fewer rows (or none);
+ * this never blocks a quote.
  */
 export async function selectCandidates(
   db: Db,
@@ -211,7 +225,7 @@ export async function selectCandidates(
   const score = makeScorer(event.eventType, opts.text);
   const [own, prices, events] = await Promise.all([
     ownRows(db, event, score, excludeQuoteId),
-    priceRows(db, score),
+    priceRows(db, event, score),
     eventRows(db, event, score),
   ]);
   return [...own, ...prices, ...events];

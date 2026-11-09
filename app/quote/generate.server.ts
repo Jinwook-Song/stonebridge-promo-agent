@@ -17,7 +17,7 @@ import {
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
 import { selectCandidates } from "./comparison.server";
-import { buildLines, diffLines } from "./lines";
+import { buildLines, computeTotals, diffLines } from "./lines";
 import { listPriceItems } from "./price-sheet.server";
 import { buildImportSystem, buildImportUser, buildQuoteSystem, buildQuoteUser, type ImportOutput } from "./prompt";
 import { getQuote } from "./quotes.server";
@@ -111,7 +111,7 @@ async function importVersion(deps: QuoteGenDeps, inputText: string): Promise<Gen
   return {
     event: cleanEvent(output.event),
     lines: importedLines(output.lines),
-    comparison: { notes: "", rows: [] },
+    comparison: { notes: "", rows: [], citedIds: [] },
     emailSubject: null,
     emailBody: null,
     changes: null,
@@ -121,11 +121,21 @@ async function importVersion(deps: QuoteGenDeps, inputText: string): Promise<Gen
 }
 
 /**
- * Only rows that were actually sent, as they were sent (later watch runs do not change it). Notes
- * without any surviving row are dropped: they could state numbers with no source behind them.
+ * Every candidate that was sent, as it was sent, and the cited ids among them. Notes citing no
+ * sent row are dropped: they could state numbers with no source behind them.
  */
-function citedComparison(notes: string, rows: ComparisonRow[]): Comparison {
-  return rows.length === 0 ? { notes: "", rows: [] } : { notes: notes.trim(), rows };
+function comparisonOf(notes: string, citedIds: string[], sent: ComparisonRow[]): Comparison {
+  const sentIds = new Set(sent.map((r) => r.id));
+  const cited = [...new Set(citedIds)].filter((id) => sentIds.has(id));
+  return { notes: cited.length === 0 ? "" : notes.trim(), rows: sent, citedIds: cited };
+}
+
+/** Supply ÷ headcount of a version, when every line has a price and the headcount is known. */
+function perPersonOf(prev: { event: QuoteEvent; lines: QuoteLine[] }): number | null {
+  const { headcount } = prev.event;
+  const totals = computeTotals(prev.lines, false);
+  if (!headcount || headcount <= 0 || totals.missingPrices > 0 || totals.supply <= 0) return null;
+  return Math.round(totals.supply / headcount);
 }
 
 /** Prices come from the sheet (or carry over from the previous version), never from the model. */
@@ -146,7 +156,12 @@ async function quoteVersion(
   const [sheet, candidates] = await Promise.all([
     listPriceItems(db, { enabledOnly: true }),
     // v1: the event type is only known after this call, so candidates are ranked by the inquiry.
-    selectCandidates(db, prev?.event ?? { eventType: "", headcount: null }, run.quoteId, { text: row.inputText }),
+    selectCandidates(
+      db,
+      prev ? { ...prev.event, perPerson: perPersonOf(prev) } : { eventType: "", headcount: null },
+      run.quoteId,
+      { text: row.inputText },
+    ),
   ]);
 
   const { output, inputTokens, outputTokens } = await deps.quote({
@@ -155,7 +170,6 @@ async function quoteVersion(
   });
 
   const lines = buildLines(output.lines, sheet, prev?.lines ?? null);
-  const cited = new Set(output.comparison.citedIds);
   const changes = prev
     ? [
         output.requestSummary.trim() || (row.changeRequest ?? "").trim().split("\n")[0],
@@ -165,7 +179,7 @@ async function quoteVersion(
   return {
     event: cleanEvent(output.event),
     lines,
-    comparison: citedComparison(output.comparison.notes, candidates.filter((c) => cited.has(c.id))),
+    comparison: comparisonOf(output.comparison.notes, output.comparison.citedIds, candidates),
     emailSubject: output.email.subject,
     emailBody: output.email.body,
     changes,

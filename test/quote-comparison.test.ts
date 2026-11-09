@@ -168,4 +168,45 @@ describe("selectCandidates", () => {
     const rows = await selectCandidates(db, { eventType: "", headcount: null }, null);
     expect(rows.map((r) => r.id)).toEqual([`q${newer}`, `q${older}`]);
   });
+
+  it("ranks competitor packages by how close their per-person price is to the target's", async () => {
+    const pkg = async (name: string, perPerson: number | null, day: number) => {
+      const [r] = await db
+        .insert(competitorPrices)
+        .values({ sourceId, sourceUrl: "https://example.com/a", packageName: name, perPerson, seenAt: at(day) })
+        .returning({ id: competitorPrices.id });
+      return `p${r.id}`;
+    };
+    const far = await pkg("비싼 패키지", 30000, 9);
+    const unknown = await pkg("가격 모름", null, 8);
+    const close = await pkg("비슷한 패키지", 10500, 2);
+    const cheap = await pkg("싼 패키지", 5000, 1);
+    const rows = await selectCandidates(db, { eventType: "", headcount: null, perPerson: 10000 }, null);
+    expect(rows.map((r) => r.id)).toEqual([close, cheap, far, unknown]);
+    // Without a target per-person price, newest first as before.
+    const plain = await selectCandidates(db, { eventType: "", headcount: null }, null);
+    expect(plain.map((r) => r.id)).toEqual([far, unknown, close, cheap]);
+  });
+
+  it("does not let a long item list outrank a package whose name matches", async () => {
+    const [long] = await db
+      .insert(competitorPrices)
+      .values({
+        sourceId,
+        sourceUrl: "https://example.com/a",
+        packageName: "기본 구성",
+        perPerson: 9000,
+        itemsJson: JSON.stringify(["쿠키", "음료", "과일", "샌드위치", "케이크"]),
+        seenAt: at(5),
+      })
+      .returning({ id: competitorPrices.id });
+    const [named] = await db
+      .insert(competitorPrices)
+      .values({ sourceId, sourceUrl: "https://example.com/a", packageName: "돌잔치 다과", perPerson: 9000, seenAt: at(1) })
+      .returning({ id: competitorPrices.id });
+    const rows = await selectCandidates(db, { eventType: "", headcount: null }, null, {
+      text: "돌잔치 다과 30명, 쿠키 음료 과일 샌드위치 케이크 부탁드려요",
+    });
+    expect(rows.map((r) => r.id)).toEqual([`p${named.id}`, `p${long.id}`]);
+  });
 });

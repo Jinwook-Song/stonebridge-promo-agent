@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { QuoteLineSchema } from "../app/quote/types";
+import { ComparisonSchema, QuoteLineSchema } from "../app/quote/types";
 
 const line = {
   itemId: null,
@@ -36,5 +36,12 @@ describe("QuoteLineSchema", () => {
     expect(QuoteLineSchema.safeParse({ ...line, unitPrice: 100000001 }).success).toBe(false);
     expect(QuoteLineSchema.safeParse({ ...line, unitPrice: -5 }).success).toBe(false);
     expect(QuoteLineSchema.safeParse({ ...line, priceSource: "zzz" }).success).toBe(false);
+  });
+});
+
+describe("ComparisonSchema", () => {
+  it("reads a comparison stored before citedIds existed as citing nothing", () => {
+    const parsed = ComparisonSchema.parse({ notes: "", rows: [] });
+    expect(parsed.citedIds).toEqual([]);
   });
 });
