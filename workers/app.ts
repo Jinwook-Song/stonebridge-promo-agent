@@ -3,6 +3,7 @@ import { createRequestHandler } from "react-router";
 import { runScheduled } from "../app/kakao/alerts.server";
 import { kakaoConfig } from "../app/kakao/link.server";
 import { getDb, withD1Session } from "../app/server/db";
+import { startWatchRun, WATCH_CRON } from "../app/watch/run.server";
 
 const requestHandler = createRequestHandler(
   () => import("virtual:react-router/server-build"),
@@ -35,9 +36,15 @@ export default {
     return out;
   },
 
-  // Kakao alerts; crons in wrangler.jsonc `triggers` (CRONS in app/kakao/alerts.server.ts).
+  // Crons in wrangler.jsonc `triggers`: the competitor watch (WATCH_CRON in app/watch/run.server.ts)
+  // starts its Workflow; the rest are Kakao alerts (CRONS in app/kakao/alerts.server.ts), which
+  // answer "unknown_cron" for anything else.
   async scheduled(controller) {
     const now = new Date(controller.scheduledTime);
+    if (controller.cron === WATCH_CRON) {
+      console.log(`competitor watch ${controller.cron}: ${await startWatchRun(env.WATCH, now)}`);
+      return;
+    }
     const outcome = await runScheduled(controller.cron, now, {
       db: getDb(env.DB),
       cfg: kakaoConfig(env),
@@ -48,5 +55,7 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-// Bound as GENERATE in wrangler.jsonc.
+// Bound as GENERATE / QUOTE_GENERATE / WATCH in wrangler.jsonc.
 export { GeneratePostWorkflow } from "./generate-workflow";
+export { QuoteGenerateWorkflow } from "./quote-workflow";
+export { WatchWorkflow } from "./watch-workflow";

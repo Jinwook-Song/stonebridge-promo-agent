@@ -53,3 +53,30 @@
 - [ ] **새 D1 마이그레이션이 있으면 배포 전에 먼저 원격에 적용한다.** 순서는 `npx wrangler d1 migrations apply promo-agent --remote` → `npm run deploy`.
   - 앱을 마이그레이션보다 먼저 배포하면 안 된다. drizzle이 스키마의 모든 칸을 SELECT해서, 새 칸이 아직 없으면 글 페이지가 전부 실패한다.
   - 이번 배포에 필요한 것: `0003_draft_ready_alert.sql` (`posts.draft_notified_at` 칸 추가).
+
+## 견적 에이전트 (2026-11-09 배포)
+
+순서: 원격 마이그레이션 → 비공개 시드 → npm run deploy
+
+- [ ] **새 Workflow 바인딩**: `wrangler.jsonc`의 `QUOTE_GENERATE` (`quote-generate`, `QuoteGenerateWorkflow`). `npm run deploy`가 같이 만든다. 배포 결과의 Bindings 목록에 `env.QUOTE_GENERATE`가 보이는지 확인한다.
+- [ ] **호환 플래그**: `nodejs_compat` (엑셀 `exceljs`가 필요로 한다). `nodejs_als`를 포함한다.
+- [ ] **마이그레이션 `0004_quote_agent.sql`** (표 6개 추가: `quotes`, `quote_versions`, `price_items`, `competitor_events`, `competitor_prices`, `watch_sources`). 배포 전에 먼저 `npx wrangler d1 migrations apply promo-agent --remote`. 추가만 하는 마이그레이션이라 기존 화면은 영향이 없다.
+- [ ] **비공개 시드** (`private/seed-quote-2026-11-09.sql`, git에 올리지 않는다): `npx wrangler d1 execute promo-agent --remote --file private/seed-quote-2026-11-09.sql`
+  - 다시 실행해도 안전하다. 가격 항목은 같은 이름이 없을 때만 넣고(사장님이 고친 값은 남는다), 소개 문구와 기본 제공 사항은 덮어쓴다.
+  - 가격 항목은 모두 `needs_confirm = 1`이다. 사장님이 앱의 가격표에서 저장하면 확인된 것으로 바뀐다.
+  - 소개 문구는 분석 문서에 일부만 있어서 사장님 확인이 필요하다. 발신 정보(`quote_sender`)는 넣지 않는다 (기본값 스톤테이블, 사업자 등록 후 설정에서 입력).
+- [ ] **실제 확인**: `npx wrangler tail`을 켜 두고, 가짜 문의로 견적을 만든다 → 수정 요청으로 v2 → 엑셀 받기(200, `filename*`) → 테스트 견적 지우기. 2026-11-09 실측: v1 약 16초(입력 5,973 / 출력 748 토큰), v2 약 17초(캐시 읽기 5,195 토큰), 두 번 합쳐 약 $0.07.
+
+## 경쟁 업체 감시 (2026-11-09 배포)
+
+순서: 원격 마이그레이션 → 비공개 감시 목록 시드 → npm run deploy
+
+- [ ] **마이그레이션 `0005_competitor_event_notes.sql`** (`competitor_events.notes` 칸 추가). 추가만 하는 마이그레이션. 배포 전에 먼저 `npx wrangler d1 migrations apply promo-agent --remote`.
+- [ ] **새 Workflow 바인딩**: `WATCH` (`watch`, `WatchWorkflow`). 크론 `0 18 * * *` (UTC, 한국 시간 새벽 3시)이 매일 감시를 시작한다. 배포 결과의 Bindings와 schedule 목록에서 확인한다.
+- [ ] **비공개 시드** (`private/seed-watch-2026-11-09.sql`, git에 올리지 않는다): `npx wrangler d1 execute promo-agent --remote --file private/seed-watch-2026-11-09.sql`
+  - 다시 실행해도 안전하다. 같은 주소가 이미 있으면 넣지 않는다.
+  - 경쟁 업체 이름과 주소는 이 파일과 DB에만 있다. 저장소에는 올리지 않는다.
+- [ ] **실제 확인**: 로그인 후 `/competitors`에서 "지금 한 번 돌리기" → `npx wrangler tail`로 `watch source N: ok, ... calls, ... added` 로그와 `claude usage`를 본다. 한 번 돌릴 때 Claude 호출은 최대 30번(`WATCH_RUN_BUDGET`), 글 하나당 1번이다. 수동 실행은 같은 한국 시간 1시간 안에서 한 번만 시작된다.
+  - 가격 페이지(출처당 최대 1번)를 먼저 돌리고, 남은 호출을 RSS 출처들이 나눠 쓴다(남은 수 ÷ 아직 안 돈 RSS 출처 수, 올림). 첫 실행처럼 밀린 글이 많으면 출처마다 일부만 읽고 나머지는 다음 실행에서 읽는다. 호출이 바닥나 건너뛴 출처는 감시 목록에 "예산이 모자라 이번엔 건너뛰었어요"가 보인다. 평소(크론)에는 새 글만 읽어서 호출이 적다.
+  - 2026-11-09 실측: 1회차 30번 약 $0.32 (앞 출처 3개만 돎), 2회차 12번 약 $0.22 (나머지 5개). 합쳐 소식 31개, 가격 15개. 출처 8개 중 6개 ok, 2개는 상대 사이트 문제로 error (글자 없는 페이지, 상대 인증서 오류 HTTP 526).
+- [ ] 다음 날 새벽 3시 크론이 돈 뒤 `SELECT name, last_status, last_error, last_run_at FROM watch_sources`로 출처마다 `last_run_at`이 갱신됐는지 본다.

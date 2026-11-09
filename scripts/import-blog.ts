@@ -40,7 +40,10 @@ async function fetchText(url: string): Promise<string> {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const items = parseRss(await fetchText(`https://rss.blog.naver.com/${blog}.xml`)).slice(0, limit);
+// Naver feeds give every post a logNo; the filter only narrows the type.
+const items = parseRss(await fetchText(`https://rss.blog.naver.com/${blog}.xml`))
+  .flatMap((item) => (item.logNo ? [{ ...item, logNo: item.logNo }] : []))
+  .slice(0, limit);
 console.log(`RSS: ${items.length} posts`);
 
 const rows: SeedExample[] = [];

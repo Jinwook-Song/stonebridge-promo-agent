@@ -2,6 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import type { z } from "zod";
+import { ImportOutput, QuoteOutput } from "../quote/prompt";
+import { EventExtract, PriceExtract } from "../watch/extract";
 import { PhotoPickOutput } from "./photo-pick.server";
 import { ChannelRewrite, DraftOutput } from "./prompt";
 
@@ -37,31 +39,47 @@ export class GenerationError extends Error {
 
 /**
  * API errors that will fail the same way on every retry (bad key, bad request, too large), with
- * the Korean message to show. null = transient (network, 408, 409, 429, 5xx) or not an API error.
+ * the Korean message to show. `kind`: "setup" = our configuration, "request" = what was sent.
+ * null = transient (network, 408, 409, 429, 5xx) or not an API error.
  */
-export function permanentApiFailure(e: unknown): { message: string } | null {
+export function permanentApiFailure(e: unknown): { message: string; kind: "setup" | "request" } | null {
   if (!(e instanceof Anthropic.APIError)) return null;
   switch (e.status) {
     case 401:
     case 403:
     // Wrong model id or endpoint: a setup problem, like a bad key.
     case 404:
-      return { message: "AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요." };
+      return { message: "AI 연결 설정에 문제가 있어요. 관리자에게 알려 주세요.", kind: "setup" };
     case 400:
     case 413:
     case 422:
-      return { message: "AI가 요청을 처리하지 못했어요. 사진 수를 줄이거나 메모를 바꿔 다시 시도해 주세요." };
+      return {
+        message: "AI가 요청을 처리하지 못했어요. 사진 수를 줄이거나 메모를 바꿔 다시 시도해 주세요.",
+        kind: "request",
+      };
     default:
       return null;
   }
 }
 
 export type ModelRequest = { system: string; user: Anthropic.ContentBlockParam[] };
-type ModelResult<T> = { output: T; inputTokens: number; outputTokens: number };
+export type ModelResult<T> = { output: T; inputTokens: number; outputTokens: number };
 export type DraftCall = (req: ModelRequest) => Promise<ModelResult<DraftOutput>>;
 export type RewriteCall = (req: ModelRequest) => Promise<ModelResult<ChannelRewrite>>;
 export type PickCall = (req: ModelRequest) => Promise<ModelResult<PhotoPickOutput>>;
-export type ClaudeCalls = { drafts: DraftCall; rewrite: RewriteCall; pick: PickCall };
+export type QuoteCall = (req: ModelRequest) => Promise<ModelResult<QuoteOutput>>;
+export type ImportCall = (req: ModelRequest) => Promise<ModelResult<ImportOutput>>;
+export type WatchEventCall = (req: ModelRequest) => Promise<ModelResult<EventExtract>>;
+export type WatchPricesCall = (req: ModelRequest) => Promise<ModelResult<PriceExtract>>;
+export type ClaudeCalls = {
+  drafts: DraftCall;
+  rewrite: RewriteCall;
+  pick: PickCall;
+  quote: QuoteCall;
+  importQuote: ImportCall;
+  watchEvent: WatchEventCall;
+  watchPrices: WatchPricesCall;
+};
 
 type Effort = "low" | "medium" | "high";
 
@@ -71,6 +89,13 @@ type Effort = "low" | "medium" | "high";
  * SDK defaults (they run in a Workflow step that has its own retry policy).
  */
 const PICK_REQUEST_OPTIONS = { maxRetries: 0, timeout: 40_000 } as const;
+
+/**
+ * Competitor watch: up to 10 calls run one after another inside a 5-minute Workflow step, so one
+ * slow call must not use the whole step. No SDK retries: each call billed is one counted against
+ * the run's budget (a failed post is read again next run).
+ */
+const WATCH_REQUEST_OPTIONS = { maxRetries: 0, timeout: 60_000 } as const;
 
 /**
  * Real calls. API errors (network, 429, 5xx, ...) are left to propagate as the SDK's typed
@@ -124,6 +149,13 @@ export function makeClaudeCalls(apiKey: string): ClaudeCalls {
     // A short answer the owner waits for on the form: low keeps the wait short (spec: measure,
     // raise to medium if the picks are poor).
     pick: (req) => call(PhotoPickOutput, req, "low", PICK_REQUEST_OPTIONS),
+    // Quotes run in a Workflow step like drafts. Medium to start; measure (spec §6.2).
+    quote: (req) => call(QuoteOutput, req, "medium"),
+    // Copying a finished quote needs no judgement.
+    importQuote: (req) => call(ImportOutput, req, "low"),
+    // Copying facts out of one page; nothing to judge.
+    watchEvent: (req) => call(EventExtract, req, "low", WATCH_REQUEST_OPTIONS),
+    watchPrices: (req) => call(PriceExtract, req, "low", WATCH_REQUEST_OPTIONS),
   };
 }
 
@@ -190,5 +222,121 @@ export function makeFakeClaudeCalls(): ClaudeCalls {
         outputTokens: 0,
       };
     },
+    // v1: one line for the first price sheet item. A revision keeps every previous line, so a
+    // hand-set price can be seen surviving the new version.
+    quote: async (req) => {
+      await wait();
+      const sheet = jsonBlock(req.user, "## 가격 기준표");
+      const prev = jsonBlock(req.user, "## 이전 버전 견적 줄");
+      const first = sheet[0] as { id?: unknown; name?: unknown } | undefined;
+      const lines =
+        prev.length > 0
+          ? prev.map((raw, index) => {
+              const l = raw as { itemId: number | null; label: string; content: string; qty: number; menu: string; note: string };
+              return { itemId: l.itemId, label: l.label, content: l.content, qty: l.qty, menu: l.menu, note: l.note, tip: "", prevIndex: index };
+            })
+          : [
+              {
+                itemId: typeof first?.id === "number" ? first.id : null,
+                label: typeof first?.name === "string" ? first.name : "테스트 항목",
+                content: "(테스트 견적)",
+                qty: 10,
+                menu: "",
+                note: "",
+                tip: "테스트 제안 (사장님만 봐요)",
+                prevIndex: null,
+              },
+            ];
+      return {
+        output: {
+          event: {
+            customerName: "테스트 고객",
+            contactName: "",
+            contact: "",
+            email: "",
+            eventDate: "",
+            headcount: 10,
+            venue: "",
+            eventType: "테스트 행사",
+            budget: "",
+            requests: "",
+            missing: ["행사 날짜를 알려 주실 수 있나요?"],
+          },
+          lines,
+          comparison: { notes: "", citedIds: [] },
+          email: { subject: "[테스트] 견적 보내드려요", body: "안녕하세요. 견적서 보내드려요. (테스트 메일)" },
+          requestSummary: prev.length > 0 ? "테스트 수정 요청" : "",
+        },
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    },
+    importQuote: async () => {
+      await wait();
+      return {
+        output: {
+          event: {
+            customerName: "테스트 고객",
+            contactName: "",
+            contact: "",
+            email: "",
+            eventDate: "",
+            headcount: 10,
+            venue: "",
+            eventType: "테스트 행사",
+            budget: "",
+            requests: "",
+            missing: [],
+          },
+          lines: [{ label: "테스트 항목", content: "(가져온 견적)", qty: 10, unitPrice: 10000, svc: false, menu: "", note: "" }],
+        },
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    },
+    // Every post reads as a small event, so the watch tab has rows to show locally.
+    watchEvent: async () => {
+      await wait();
+      return {
+        output: {
+          isEvent: true,
+          date: "",
+          client: "테스트 고객",
+          venue: "",
+          eventType: "테스트 행사",
+          menu: ["테스트 메뉴"],
+          quantity: null,
+          headcount: 10,
+          price: null,
+          notes: "(테스트 추출)",
+        },
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    },
+    watchPrices: async () => {
+      await wait();
+      return {
+        output: { packages: [{ name: "테스트 패키지", perPerson: 10000, items: ["테스트 메뉴"], minimum: null, fees: [] }] },
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+    },
   };
+}
+
+/** Rows of a JSON-lines block of the quote prompt (app/quote/prompt.ts), for the fake only. */
+function jsonBlock(user: Anthropic.ContentBlockParam[], heading: string): unknown[] {
+  const block = user.find((b): b is Anthropic.TextBlockParam => b.type === "text" && b.text.startsWith(heading));
+  if (!block) return [];
+  return block.text
+    .split("\n")
+    .slice(1)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as unknown];
+      } catch {
+        return [];
+      }
+    });
 }

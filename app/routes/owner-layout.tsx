@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { LogOutIcon } from "lucide-react";
-import { Form, Link, NavLink, Outlet } from "react-router";
+import { Form, Link, NavLink, Outlet, useMatches } from "react-router";
 import type { Route } from "./+types/owner-layout";
 import { Logo } from "../components/Logo";
 import { Button } from "../components/ui/button";
@@ -28,12 +28,16 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 const LINKS = [
   { to: "/", label: "글 목록", end: true },
+  { to: "/quotes", label: "견적", end: false },
+  { to: "/competitors", label: "경쟁 업체", end: false },
   { to: "/settings", label: "설정", end: false },
 ];
 
 export default function OwnerLayout() {
+  // Routes with wide tables (the quote screens) ask for more room with `handle = { wide: true }`.
+  const wide = useMatches().some((m) => (m.handle as { wide?: boolean } | undefined)?.wide === true);
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-xl flex-col">
+    <div className={cn("mx-auto flex min-h-screen w-full flex-col", wide ? "max-w-4xl" : "max-w-xl")}>
       <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
         <div className="flex items-center justify-between gap-2 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2">
           <Link to="/" aria-label="글 목록으로">

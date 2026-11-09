@@ -2,7 +2,17 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { getDb } from "../app/server/db";
-import { drafts, photos, posts } from "../database/schema";
+import {
+  competitorEvents,
+  competitorPrices,
+  drafts,
+  photos,
+  posts,
+  priceItems,
+  quotes,
+  quoteVersions,
+  watchSources,
+} from "../database/schema";
 
 const now = "2026-11-08T00:00:00Z";
 
@@ -58,5 +68,100 @@ describe("schema", () => {
         .bind(now)
         .run(),
     ).rejects.toThrow();
+  });
+
+  describe("quote agent tables", () => {
+    const sender = JSON.stringify({ company: "c", person: "p", phone: "1", email: "e@x.test", payment: "", onsite: "", bizNo: "" });
+
+    async function newQuote() {
+      const db = getDb(env.DB);
+      const [q] = await db
+        .insert(quotes)
+        .values({ status: "draft", source: "app", senderJson: sender, vatIncluded: false, createdAt: now, updatedAt: now })
+        .returning();
+      return q;
+    }
+
+    async function newVersion(quoteId: number, version: number) {
+      const db = getDb(env.DB);
+      const [v] = await db
+        .insert(quoteVersions)
+        .values({ quoteId, version, status: "generating", inputText: "text", createdAt: now })
+        .returning();
+      return v;
+    }
+
+    async function newSource(url: string) {
+      const db = getDb(env.DB);
+      const [s] = await db
+        .insert(watchSources)
+        .values({ name: "src", kind: "rss", url, createdAt: now })
+        .returning();
+      return s;
+    }
+
+    it("stores and reads a row in each of the six tables", async () => {
+      const db = getDb(env.DB);
+      const [item] = await db
+        .insert(priceItems)
+        .values({ kind: "per_person", name: "item", unit: "person", unitPrice: 1000, createdAt: now })
+        .returning();
+      expect(item).toMatchObject({ content: "", minimumQty: null, needsConfirm: false, enabled: true, sort: 0 });
+
+      const q = await newQuote();
+      expect(q.vatIncluded).toBe(false);
+      const v = await newVersion(q.id, 1);
+      expect(v).toMatchObject({ status: "generating", eventJson: null, linesJson: null, generatedAt: null });
+
+      const src = await newSource("https://example.test/feed");
+      expect(src).toMatchObject({ enabled: true, lastStatus: null, memo: "" });
+
+      await db.insert(competitorEvents).values({ sourceId: src.id, sourceUrl: "https://example.test/e/1", seenAt: now });
+      // 0005: notes column, nullable.
+      await db
+        .insert(competitorEvents)
+        .values({ sourceId: src.id, sourceUrl: "https://example.test/e/2", notes: "1인 8,000원", seenAt: now });
+      const notes = await db.select({ notes: competitorEvents.notes }).from(competitorEvents).where(eq(competitorEvents.sourceId, src.id));
+      expect(notes.map((n) => n.notes).sort()).toEqual(["1인 8,000원", null]);
+      await db
+        .insert(competitorPrices)
+        .values({ sourceId: src.id, sourceUrl: "https://example.test/p", packageName: "pkg", perPerson: 20000, seenAt: now });
+      expect(await db.select().from(competitorEvents).where(eq(competitorEvents.sourceId, src.id))).toHaveLength(2);
+      expect(await db.select().from(competitorPrices).where(eq(competitorPrices.sourceId, src.id))).toHaveLength(1);
+    });
+
+    it("rejects a duplicate (quoteId, version)", async () => {
+      const q = await newQuote();
+      await newVersion(q.id, 1);
+      await expect(newVersion(q.id, 1)).rejects.toThrow();
+      await newVersion(q.id, 2);
+    });
+
+    it("deletes versions with their quote", async () => {
+      const db = getDb(env.DB);
+      const q = await newQuote();
+      await newVersion(q.id, 1);
+      await db.delete(quotes).where(eq(quotes.id, q.id));
+      expect(await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, q.id))).toHaveLength(0);
+    });
+
+    it("rejects a duplicate competitor event sourceUrl", async () => {
+      const db = getDb(env.DB);
+      const src = await newSource("https://example.test/feed2");
+      const url = "https://example.test/e/dup";
+      await db.insert(competitorEvents).values({ sourceId: src.id, sourceUrl: url, seenAt: now });
+      await expect(db.insert(competitorEvents).values({ sourceId: src.id, sourceUrl: url, seenAt: now })).rejects.toThrow();
+    });
+
+    it("rejects unknown enum values through the CHECK constraints", async () => {
+      const bad = (sqlText: string, ...binds: unknown[]) => expect(env.DB.prepare(sqlText).bind(...binds).run()).rejects.toThrow();
+      await bad("insert into quotes (status, source, sender_json, vat_included, created_at, updated_at) values ('zzz','app','{}',0,?,?)", now, now);
+      await bad("insert into quotes (status, source, sender_json, vat_included, created_at, updated_at) values ('draft','zzz','{}',0,?,?)", now, now);
+      const q = await newQuote();
+      await bad("insert into quote_versions (quote_id, version, status, input_text, created_at) values (?,1,'zzz','t',?)", q.id, now);
+      await bad("insert into price_items (kind, name, unit, created_at) values ('zzz','n','u',?)", now);
+      await bad("insert into watch_sources (name, kind, url, created_at) values ('n','zzz','u',?)", now);
+      await bad("insert into watch_sources (name, kind, url, last_status, created_at) values ('n','rss','u','zzz',?)", now);
+    });
   });
 });

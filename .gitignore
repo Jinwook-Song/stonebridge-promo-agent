@@ -12,5 +12,7 @@ build/
 .DS_Store
 # 사장님 원본 자료(사진, 견적 엑셀 등)는 절대 올리지 않는다
 private/
+# the worktree keeps private as a symlink, which private/ does not match
+private
 *.xlsx
 worker-configuration.d.ts

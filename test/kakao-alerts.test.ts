@@ -15,6 +15,7 @@ import {
 } from "../app/kakao/alerts.server";
 import { MEMO_TEXT_LIMIT, type Fetch } from "../app/kakao/client.server";
 import { getDb } from "../app/server/db";
+import { WATCH_CRON } from "../app/watch/run.server";
 import wranglerConfig from "../wrangler.jsonc?raw";
 
 const db = getDb(env.DB);
@@ -230,10 +231,11 @@ describe("runScheduled: 홍보글 알림", () => {
 });
 
 describe("cron wiring", () => {
-  it("wrangler.jsonc triggers match CRONS", () => {
+  it("wrangler.jsonc triggers match CRONS plus the competitor watch cron", () => {
     const crons = wranglerConfig.match(/"crons"\s*:\s*\[([^\]]*)\]/)?.[1];
     const listed = [...(crons ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(listed.sort()).toEqual(Object.values(CRONS).sort());
+    expect(listed.sort()).toEqual([...Object.values(CRONS), WATCH_CRON].sort());
+    expect(Object.values(CRONS)).not.toContain(WATCH_CRON);
   });
 
   it("the daily 발주 cron keeps the Kakao link alive even with every alert off", async () => {
