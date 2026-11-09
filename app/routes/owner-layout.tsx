@@ -1,9 +1,10 @@
 import { env } from "cloudflare:workers";
 import { LogOutIcon } from "lucide-react";
-import { Form, Link, NavLink, Outlet, useMatches } from "react-router";
+import { Form, Link, Outlet, useLocation, useMatches, useNavigation } from "react-router";
 import type { Route } from "./+types/owner-layout";
 import { Logo } from "../components/Logo";
 import { Button } from "../components/ui/button";
+import { litTab } from "../lib/nav-tabs";
 import { cn } from "../lib/utils";
 import { requireOwner } from "../server/auth.server";
 
@@ -36,6 +37,12 @@ const LINKS = [
 export default function OwnerLayout() {
   // Routes with wide tables (the quote screens) ask for more room with `handle = { wide: true }`.
   const wide = useMatches().some((m) => (m.handle as { wide?: boolean } | undefined)?.wide === true);
+  const { pathname } = useLocation();
+  const navigation = useNavigation();
+  const pendingPathname = navigation.state === "loading" ? navigation.location.pathname : null;
+  const lit = litTab(LINKS, pathname, pendingPathname);
+  // Another page is on its way: the old one fades a little, only if the wait is noticeable.
+  const leaving = pendingPathname !== null && pendingPathname !== pathname;
   return (
     <div className={cn("mx-auto flex min-h-screen w-full flex-col", wide ? "max-w-4xl" : "max-w-xl")}>
       <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
@@ -51,24 +58,26 @@ export default function OwnerLayout() {
           </Form>
         </div>
         <nav className="flex gap-1 px-3 pb-2" aria-label="메뉴">
-          {LINKS.map(({ to, label, end }) => (
-            <NavLink
+          {LINKS.map(({ to, label }) => (
+            <Link
               key={to}
               to={to}
-              end={end}
-              className={({ isActive }) =>
-                cn(
-                  "flex h-11 flex-1 items-center justify-center rounded-md text-sm font-medium transition-colors",
-                  isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
-                )
-              }
+              // Lit from the tap, not from the server's answer (see litTab).
+              aria-current={lit === to ? "page" : undefined}
+              className={cn(
+                "flex h-11 flex-1 items-center justify-center rounded-md text-sm font-medium",
+                lit === to ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
+              )}
             >
               {label}
-            </NavLink>
+            </Link>
           ))}
         </nav>
       </header>
-      <main className="flex-1 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+      <main
+        data-leaving={leaving || undefined}
+        className="flex-1 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] transition-opacity data-[leaving]:opacity-50 data-[leaving]:delay-150"
+      >
         <Outlet />
       </main>
     </div>
