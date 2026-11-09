@@ -104,6 +104,11 @@ describe("alert settings", () => {
     expect((await getAlertSettings(db)).monthlyDay2).toBeNull();
   });
 
+  it("a second day equal to the first reads as none", async () => {
+    await saveAlertSettings(db, { monthlyDay: 15, monthlyDay2: 15 });
+    expect(await getAlertSettings(db)).toMatchObject({ monthlyDay: 15, monthlyDay2: null });
+  });
+
   it("monthlyDaysText lists one or two days, earlier first", () => {
     expect(monthlyDaysText(1, null)).toBe("1일");
     expect(monthlyDaysText(20, 5)).toBe("5일·20일");

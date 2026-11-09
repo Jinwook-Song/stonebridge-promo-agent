@@ -41,14 +41,15 @@ const DEFAULT_MONTHLY_DAY = 1;
 export async function getAlertSettings(db: Db): Promise<AlertSettings> {
   const rows = await db.select().from(settings).where(inArray(settings.key, Object.values(KEYS)));
   const byKey = new Map(rows.map((r) => [r.key, r.value]));
-  const day = parseMonthlyDay(byKey.get(KEYS.monthlyDay) ?? "");
+  const day = parseMonthlyDay(byKey.get(KEYS.monthlyDay) ?? "") ?? DEFAULT_MONTHLY_DAY;
+  const day2 = parseMonthlyDay(byKey.get(KEYS.monthlyDay2) ?? "");
   return {
     // Off unless turned on: connecting alone must not start nightly pings.
     orderEnabled: byKey.get(KEYS.orderEnabled) === "1",
     monthlyEnabled: byKey.get(KEYS.monthlyEnabled) === "1",
-    monthlyDay: day ?? DEFAULT_MONTHLY_DAY,
-    // Stored as "" when cleared.
-    monthlyDay2: parseMonthlyDay(byKey.get(KEYS.monthlyDay2) ?? ""),
+    monthlyDay: day,
+    // Stored as "" when cleared; a copy of the first day counts as no second day.
+    monthlyDay2: day2 === day ? null : day2,
     // Only an explicit "0" turns it off; no row yet means on.
     draftReadyEnabled: byKey.get(KEYS.draftReadyEnabled) !== "0",
   };
