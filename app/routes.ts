@@ -19,6 +19,7 @@ export default [
     route("competitors", "routes/competitors.tsx"),
     route("settings", "routes/settings.tsx"),
     route("settings/quote", "routes/quote-settings.tsx"),
+    route("questions", "routes/questions.tsx"),
     route("kakao/connect", "routes/kakao.connect.ts"),
     route("kakao/callback", "routes/kakao.callback.ts"),
   ]),

@@ -10,6 +10,7 @@ import {
 import { ALERT_KINDS, ALERT_STATUSES } from "../app/kakao/types";
 import { PRICE_KINDS, QUOTE_SOURCES, QUOTE_STATUSES, VERSION_STATUSES } from "../app/quote/types";
 import { WATCH_KINDS, WATCH_STATUSES } from "../app/watch/types";
+import { QUESTION_KINDS, QUESTION_STATUSES } from "../app/questions/types";
 
 // 시각은 모두 UTC ISO 문자열.
 
@@ -300,4 +301,33 @@ export const competitorPrices = sqliteTable(
     seenAt: text("seen_at").notNull(),
   },
   (t) => [index("competitor_prices_source_package_idx").on(t.sourceId, t.packageName)],
+);
+
+/** Questions for the owner (/questions). Seeded from a private file; see app/questions/types.ts. */
+export const ownerQuestions = sqliteTable(
+  "owner_questions",
+  {
+    id: text("id").primaryKey(),
+    sort: integer("sort").notNull().default(0),
+    kind: text("kind", { enum: QUESTION_KINDS }).notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull().default(""),
+    /** Why we ask, shown small under the question. */
+    why: text("why"),
+    /** confirm: the value on file she checks. */
+    current: text("current"),
+    /** An in-app path to the screen the question is about. */
+    link: text("link"),
+    linkLabel: text("link_label"),
+    /** See QuestionApply. */
+    apply: text("apply"),
+    status: text("status", { enum: QUESTION_STATUSES }).notNull().default("open"),
+    answer: text("answer"),
+    answeredAt: text("answered_at"),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    check("owner_questions_kind_check", inList(t.kind, QUESTION_KINDS)),
+    check("owner_questions_status_check", inList(t.status, QUESTION_STATUSES)),
+  ],
 );
