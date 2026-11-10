@@ -38,7 +38,7 @@ function isRealDate(s: string): boolean {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
-/** Digits-only 02 / 0XX number -> `02-123-4567`, `010-1234-5678`. Null if it is not one. */
+/** Digits-only 02 / 0XX number -> `02-123-4567`, `010-1234-5678`. Null if it is not one (the schema checks the prefix). */
 function formatPhone(raw: string): string | null {
   if (!/^[0-9\s-]+$/.test(raw)) return null;
   const d = raw.replace(/\D/g, "");
@@ -67,7 +67,8 @@ export function inquiryInputSchema(now?: Date) {
     org: text(60, "기관·회사명은 60자 안으로 적어 주세요"),
     phone: z
       .string({ error: PHONE_ERROR })
-      .regex(/^(02-\d{3,4}-\d{4}|0\d{2}-\d{3,4}-\d{4})$/, PHONE_ERROR),
+      // Real prefixes only: 02 Seoul, 01x mobile, 03x-06x area codes, 070 internet phone.
+      .regex(/^(02-\d{3,4}-\d{4}|(01\d|0[3-6]\d|070)-\d{3,4}-\d{4})$/, PHONE_ERROR),
     email: z
       .string({ error: "이메일을 적어 주세요" })
       .trim()

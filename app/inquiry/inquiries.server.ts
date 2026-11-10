@@ -32,6 +32,8 @@ export type SubmitDeps = {
   db: Db;
   startGeneration: (quoteId: number) => Promise<void>;
   notify: (info: NewInquiryInfo) => Promise<unknown>;
+  /** Runs work after the response (ctx.waitUntil). */
+  defer: (work: Promise<unknown>) => void;
 };
 
 /**
@@ -59,6 +61,10 @@ async function findByToken(db: Db, clientToken: string) {
  * The same clientToken gives back the first inquiry (double click, resend). Once the inquiry is
  * stored the result is ok even if the quote, the generation or the alert fails: the owner can
  * still start from the stored inquiry, and the customer must not be told it failed.
+ *
+ * The generation start stays awaited: a D1 claim and a Workflow create, both inside Cloudflare,
+ * and its outcome is recorded on the version. The Kakao alert goes to `defer`: it is an outside
+ * API (sometimes after a token refresh) and the site's answer must not wait on it.
  */
 export async function submitInquiry(
   deps: SubmitDeps,
@@ -148,11 +154,12 @@ export async function submitInquiry(
       console.error("inquiry quote generation did not start", { inquiryId, quoteId, error: errName(e) });
     }
   }
-  try {
-    await deps.notify({ quoteId, org: v.org, eventDate: v.eventDate, headcount: v.headcount });
-  } catch (e) {
+  const info: NewInquiryInfo = { quoteId, org: v.org, eventDate: v.eventDate, headcount: v.headcount };
+  // The async wrapper also catches a notify that throws before returning its promise.
+  const alert = (async () => deps.notify(info))().catch((e: unknown) => {
     console.error("inquiry alert failed", { inquiryId, quoteId, error: errName(e) });
-  }
+  });
+  deps.defer(alert);
   return { ok: true, inquiryId };
 }
 

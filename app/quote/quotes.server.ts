@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { quotes, quoteVersions } from "../../database/schema";
+import { inquiries, quotes, quoteVersions } from "../../database/schema";
 import { STALE_CLAIM_MS } from "../promo/generate.server";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
@@ -76,6 +76,8 @@ export type QuoteListItem = {
   missingPrices: number;
   latestVersion: number;
   latestStatus: VersionStatus;
+  /** Made from an inquiry on the 스톤테이블 site (linked by inquiries.quote_id). */
+  fromSite: boolean;
 };
 
 // ---- JSON columns ----------------------------------------------------------
@@ -290,7 +292,7 @@ export async function listQuotes(db: Db): Promise<QuoteListItem[]> {
   const latestReady = sql`${quoteVersions.version} = (SELECT max(v2.version) FROM ${quoteVersions} v2
     WHERE v2.quote_id = ${quoteVersions.quoteId} AND v2.status = 'ready')`;
   // Separate selects: a join would put quotes.status and quote_versions.status under one key.
-  const [heads, latestRows, ready] = await db.batch([
+  const [heads, latestRows, ready, siteRows] = await db.batch([
     db
       .select({
         id: quotes.id,
@@ -309,9 +311,12 @@ export async function listQuotes(db: Db): Promise<QuoteListItem[]> {
       .select({ quoteId: quoteVersions.quoteId, eventJson: quoteVersions.eventJson, linesJson: quoteVersions.linesJson })
       .from(quoteVersions)
       .where(and(eq(quoteVersions.status, "ready"), latestReady)),
+    // Only the link: no contact column of the inquiry is read here.
+    db.select({ quoteId: inquiries.quoteId }).from(inquiries).where(isNotNull(inquiries.quoteId)),
   ]);
   const latestBy = new Map(latestRows.map((r) => [r.quoteId, r]));
   const readyBy = new Map(ready.map((r) => [r.quoteId, r]));
+  const fromSite = new Set(siteRows.map((r) => r.quoteId));
 
   return heads.flatMap((h) => {
     const last = latestBy.get(h.id);
@@ -334,6 +339,7 @@ export async function listQuotes(db: Db): Promise<QuoteListItem[]> {
       missingPrices: totals?.missingPrices ?? 0,
       latestVersion: last.version,
       latestStatus: last.status,
+      fromSite: fromSite.has(h.id),
     };
     return [item];
   });
@@ -435,6 +441,16 @@ export async function setStatus(db: Db, quoteId: number, status: QuoteStatus, no
 export async function deleteQuote(db: Db, quoteId: number): Promise<void> {
   const deleted = await db.delete(quotes).where(eq(quotes.id, quoteId)).returning({ id: quotes.id });
   if (deleted.length === 0) throw new DomainError("NOT_FOUND", "견적을 찾을 수 없어요.");
+}
+
+/** Whether the quote was made from a site inquiry. Reads only the link, never the contact. */
+export async function isSiteQuote(db: Db, quoteId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ quoteId: inquiries.quoteId })
+    .from(inquiries)
+    .where(eq(inquiries.quoteId, quoteId))
+    .limit(1);
+  return row !== undefined;
 }
 
 /** Which of these quotes still exist (a comparison keeps own rows of quotes deleted since). */

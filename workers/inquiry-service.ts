@@ -24,6 +24,8 @@ export class InquiryService extends WorkerEntrypoint<Env> {
             info,
             new Date(),
           ),
+        // The Kakao send runs after the site has its answer.
+        defer: (work) => this.ctx.waitUntil(work),
       },
       raw,
       meta,

@@ -83,6 +83,7 @@ function QuoteRow({ quote: q }: { quote: QuoteListItem }) {
               <span>{q.headcount.toLocaleString("ko-KR")}명</span>
             </>
           )}
+          {q.fromSite && <Badge variant="outline">사이트 문의</Badge>}
           <Badge variant={STATUS_VARIANT[q.status]}>{QUOTE_STATUS_LABELS[q.status]}</Badge>
           <span>v{q.latestVersion}</span>
           {q.latestStatus === "generating" && <Badge variant="info">만드는 중</Badge>}
