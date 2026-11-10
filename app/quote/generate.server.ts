@@ -14,6 +14,7 @@ import {
   type FailureCopy,
   type RunOptions,
 } from "../promo/generate.server";
+import { applyInquiryContact, inquiryForQuote, stripContact } from "../inquiry/inquiries.server";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
 import { selectCandidates } from "./comparison.server";
@@ -169,6 +170,7 @@ async function quoteVersion(
   deps: QuoteGenDeps,
   run: QuoteRunRef,
   row: { inputText: string; changeRequest: string | null },
+  inquiry: Awaited<ReturnType<typeof inquiryForQuote>>,
 ): Promise<Generated> {
   const { db } = deps;
   // A revision builds on the version before it (requestRevision only makes v(n+1) from a ready vn).
@@ -177,7 +179,9 @@ async function quoteVersion(
   if (run.version > 1) {
     const before = (await getQuote(db, run.quoteId, run.version - 1)).version;
     if (!before.event || !before.lines) throw new GenerationError("invalid_output");
-    prev = { event: before.event, lines: before.lines };
+    // An inquiry quote's stored event holds the customer's contact (written by code); the model
+    // must not see it. The save puts it back (applyInquiryContact).
+    prev = { event: inquiry ? stripContact(before.event) : before.event, lines: before.lines };
   }
   const [sheet, candidates] = await Promise.all([
     listPriceItems(db, { enabledOnly: true }),
@@ -231,10 +235,13 @@ export async function runQuoteGeneration(deps: QuoteGenDeps, run: QuoteRunRef, o
 
     // Only the file's first reading is a copy; a revision of an imported quote is a normal
     // revision whose imported prices carry over through prevIndex.
+    // Looked up once per run, before anything is sent: if it fails the run fails rather than
+    // sending an inquiry quote's previous event with the contact still in it.
+    const inquiry = await inquiryForQuote(db, run.quoteId);
     const g =
       row.source === "imported" && run.version === 1
         ? await importVersion(deps, row.inputText)
-        : await quoteVersion(deps, run, row);
+        : await quoteVersion(deps, run, row, inquiry);
 
     const at = deps.now().toISOString();
     await db.batch([
@@ -247,7 +254,7 @@ export async function runQuoteGeneration(deps: QuoteGenDeps, run: QuoteRunRef, o
         .set({
           status: "ready",
           error: null,
-          eventJson: JSON.stringify(g.event),
+          eventJson: JSON.stringify(applyInquiryContact(g.event, inquiry)),
           linesJson: JSON.stringify(g.lines),
           comparisonJson: JSON.stringify(g.comparison),
           emailSubject: g.emailSubject,

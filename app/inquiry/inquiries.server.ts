@@ -1,6 +1,7 @@
 import { and, count, eq, gte, isNotNull, lt } from "drizzle-orm";
 import { inquiries, quoteVersions } from "../../database/schema";
 import { createQuote, isUniqueViolation } from "../quote/quotes.server";
+import type { QuoteEvent } from "../quote/types";
 import type { Db } from "../server/db";
 import { inquiryInputSchema, inquiryToQuoteText } from "./schema";
 
@@ -213,4 +214,32 @@ export async function purgeOldInquiries(db: Db, now: Date): Promise<number> {
     .where(lt(inquiries.createdAt, cutoff))
     .returning({ id: inquiries.id });
   return deleted.length;
+}
+
+type InquiryContact = { contactName: string; org: string; phone: string; email: string };
+
+/** A question the model left in `missing` about what the inquiry form already gave. */
+const CONTACT_QUESTION = /연락처|메일|담당자/;
+
+/**
+ * The event of a quote that came from a site inquiry, with the contact the customer typed written
+ * in by code (the model never saw it): name, phone and email overwrite whatever the model wrote,
+ * an empty customerName gets the org, and the questions about contact are dropped. No inquiry
+ * (null) leaves the event as it is.
+ */
+export function applyInquiryContact(event: QuoteEvent, c: InquiryContact | null): QuoteEvent {
+  if (c === null) return event;
+  return {
+    ...event,
+    customerName: event.customerName.trim() === "" ? c.org : event.customerName,
+    contactName: c.contactName,
+    contact: c.phone,
+    email: c.email,
+    missing: event.missing.filter((m) => !CONTACT_QUESTION.test(m)),
+  };
+}
+
+/** The event with name, phone and email blanked: what an inquiry quote may send to the model. */
+export function stripContact(event: QuoteEvent): QuoteEvent {
+  return { ...event, contactName: "", contact: "", email: "" };
 }
