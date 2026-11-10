@@ -14,7 +14,7 @@ import {
   type FailureCopy,
   type RunOptions,
 } from "../promo/generate.server";
-import { applyInquiryContact, inquiryForQuote, stripContact } from "../inquiry/inquiries.server";
+import { applyInquiryContact, errName, inquiryForQuote, stripContact } from "../inquiry/inquiries.server";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
 import { selectCandidates } from "./comparison.server";
@@ -244,28 +244,37 @@ export async function runQuoteGeneration(deps: QuoteGenDeps, run: QuoteRunRef, o
         : await quoteVersion(deps, run, row, inquiry);
 
     const at = deps.now().toISOString();
-    await db.batch([
-      db
-        .update(quotes)
-        .set({ updatedAt: at })
-        .where(and(eq(quotes.id, run.quoteId), sql`EXISTS (SELECT 1 FROM ${quoteVersions} WHERE ${owned(run)})`)),
-      db
-        .update(quoteVersions)
-        .set({
-          status: "ready",
-          error: null,
-          eventJson: JSON.stringify(applyInquiryContact(g.event, inquiry)),
-          linesJson: JSON.stringify(g.lines),
-          comparisonJson: JSON.stringify(g.comparison),
-          emailSubject: g.emailSubject,
-          emailBody: g.emailBody,
-          changesJson: g.changes === null ? null : JSON.stringify(g.changes),
-          inputTokens: g.inputTokens,
-          outputTokens: g.outputTokens,
-          generatedAt: at,
-        })
-        .where(owned(run)),
-    ]);
+    try {
+      await db.batch([
+        db
+          .update(quotes)
+          .set({ updatedAt: at })
+          .where(and(eq(quotes.id, run.quoteId), sql`EXISTS (SELECT 1 FROM ${quoteVersions} WHERE ${owned(run)})`)),
+        db
+          .update(quoteVersions)
+          .set({
+            status: "ready",
+            error: null,
+            eventJson: JSON.stringify(applyInquiryContact(g.event, inquiry)),
+            linesJson: JSON.stringify(g.lines),
+            comparisonJson: JSON.stringify(g.comparison),
+            emailSubject: g.emailSubject,
+            emailBody: g.emailBody,
+            changesJson: g.changes === null ? null : JSON.stringify(g.changes),
+            inputTokens: g.inputTokens,
+            outputTokens: g.outputTokens,
+            generatedAt: at,
+          })
+          .where(owned(run)),
+      ]);
+    } catch (e) {
+      if (inquiry === null) throw e;
+      // The batch writes the customer's contact, and drizzle puts query params in its error
+      // message: log and rethrow a bare marker so neither the logs nor the Workflow's step record
+      // can carry them.
+      console.error("quote save failed", { ...run, error: errName(e) });
+      throw new Error("QUOTE_SAVE_FAILED");
+    }
   } catch (e) {
     await handleRunFailure(e, opts, (message) => markFailed(db, run, message), run, QUOTE_FAILURE_COPY);
   }

@@ -125,7 +125,8 @@ export function alertMessage(
     case "new_inquiry": {
       // Event fields only: the chat history is not where a customer's name, phone or email belong.
       const q = info as NewInquiryInfo;
-      const who = q.org.trim() || "개인";
+      // One line, like draft_ready: a line break in the org would split the message.
+      const who = q.org.replace(/\s+/g, " ").trim() || "개인";
       const when = q.eventDate ?? "날짜 미정";
       const size = q.headcount ? `${q.headcount}명` : "인원 미정";
       return {

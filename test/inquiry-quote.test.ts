@@ -224,6 +224,43 @@ describe("quotes made from an inquiry", () => {
     }
   });
 
+  it("a failing save of an inquiry quote leaks no contact into logs or the thrown error", async () => {
+    const quoteId = await inquiryQuote();
+    // What a drizzle error looks like: the query params are in the message.
+    const leaky = new Error(`Failed query: update "quote_versions" params: 010-0000-0000,test@example.com,김예시`);
+    const batch = vi.spyOn(db, "batch").mockRejectedValueOnce(leaky);
+    const spies = (["log", "warn", "error", "info", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    try {
+      const create = vi.fn(async ({ id }: { id?: string }) => ({ id }));
+      await startQuoteGeneration({ QUOTE_GENERATE: { create } as unknown as Env["QUOTE_GENERATE"] }, db, quoteId, 1, T0);
+      const ref: QuoteRunRef = { quoteId, version: 1, workflowId: (create.mock.calls.at(-1)![0] as { id: string }).id };
+      const thrown = await runQuoteGeneration(deps(recordingQuote([])), ref).then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+
+      expect(batch).toHaveBeenCalledTimes(1);
+      expect(thrown).toBeInstanceOf(Error);
+      expect(thrown!.message).toBe("QUOTE_SAVE_FAILED");
+      expect(thrown!.cause).toBeUndefined();
+      const printed = spies
+        .flatMap((s) => s.mock.calls)
+        .map((args) => JSON.stringify(args, (_k, v) => (v instanceof Error ? { name: v.name, message: v.message } : v)));
+      expect(printed.length).toBeGreaterThan(0);
+      for (const text of [...printed, thrown!.message, String(thrown!.stack)]) {
+        expect(text).not.toContain("010-");
+        expect(text).not.toContain("@");
+        expect(text).not.toContain("김예시");
+      }
+    } finally {
+      batch.mockRestore();
+      spies.forEach((s) => s.mockRestore());
+    }
+    // Same end state as any other failed save: the version is failed and can be retried.
+    const { version } = await getQuote(db, quoteId, 1);
+    expect(version.status).toBe("failed");
+  });
+
   it("a non-inquiry quote's v2 prompt still carries the previous event as it was", async () => {
     const sent: string[] = [];
     const { quoteId } = await createQuote(db, { text: "12월 1일 학원 다과 40명", source: "app" }, T0);

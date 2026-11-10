@@ -6,7 +6,7 @@ import { startQuoteGeneration } from "../app/quote/generate.server";
 import { getDb } from "../app/server/db";
 
 /**
- * RPC entrypoint for the stonetable.kr site (its Pages Function reaches it through the PROMO
+ * RPC entrypoint for the 스톤테이블 사이트 (its Pages Function reaches it through the PROMO
  * service binding, entrypoint InquiryService). Not reachable over HTTP: fetch answers 404.
  * `raw` is validated again inside submitInquiry; nothing from the caller is trusted.
  */

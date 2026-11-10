@@ -333,7 +333,7 @@ export const ownerQuestions = sqliteTable(
 );
 
 /**
- * Inquiries from the stonetable.kr site (InquiryService.submit). Holds the customer's name, phone
+ * Inquiries from the 스톤테이블 사이트 (InquiryService.submit). Holds the customer's name, phone
  * and email, which never go to Claude: the quote text is built from the event fields only. Rows
  * older than a year are purged (purgeOldInquiries).
  */

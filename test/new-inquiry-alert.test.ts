@@ -64,6 +64,11 @@ describe("alertMessage: new_inquiry", () => {
     expect(msg.url).toBe("https://app.example/quotes/3");
   });
 
+  it("keeps the org on one line", () => {
+    const msg = alertMessage("new_inquiry", ORIGIN, { ...INFO, org: "예시\n  학원\r\n본원 " });
+    expect(msg.text).toBe("새 견적 문의가 왔어요\n예시 학원 본원 · 2026-12-01 · 40명");
+  });
+
   it("links to the quote list when the quote could not be made", () => {
     const msg = alertMessage("new_inquiry", `${ORIGIN}/`, { ...INFO, quoteId: null });
     expect(msg.url).toBe("https://app.example/quotes");

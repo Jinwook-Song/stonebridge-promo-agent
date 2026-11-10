@@ -38,7 +38,7 @@ export type SubmitDeps = {
  * Logging an error object could print query parameters (drizzle puts them in the message), which
  * would leak the customer's contact. Only its class name is logged for anything that touched them.
  */
-function errName(e: unknown): string {
+export function errName(e: unknown): string {
   return e instanceof Error ? e.name : typeof e;
 }
 
