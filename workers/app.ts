@@ -61,5 +61,7 @@ export default {
 
 // Bound as GENERATE / QUOTE_GENERATE / WATCH in wrangler.jsonc.
 export { GeneratePostWorkflow } from "./generate-workflow";
+// RPC entrypoint the stonetable.kr site calls through a service binding.
+export { InquiryService } from "./inquiry-service";
 export { QuoteGenerateWorkflow } from "./quote-workflow";
 export { WatchWorkflow } from "./watch-workflow";

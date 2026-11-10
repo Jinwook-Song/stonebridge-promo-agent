@@ -331,3 +331,41 @@ export const ownerQuestions = sqliteTable(
     check("owner_questions_status_check", inList(t.status, QUESTION_STATUSES)),
   ],
 );
+
+/**
+ * Inquiries from the stonetable.kr site (InquiryService.submit). Holds the customer's name, phone
+ * and email, which never go to Claude: the quote text is built from the event fields only. Rows
+ * older than a year are purged (purgeOldInquiries).
+ */
+export const inquiries = sqliteTable(
+  "inquiries",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    /** UUID made when the form loads; a repeat of the same token returns this row, not a new quote. */
+    clientToken: text("client_token").notNull().unique(),
+    /** Salted hash of the sender's IP, for the rate limit only. */
+    ipHash: text("ip_hash").notNull(),
+    contactName: text("contact_name").notNull(),
+    org: text("org").notNull(),
+    phone: text("phone").notNull(),
+    email: text("email").notNull(),
+    /** YYYY-MM-DD; null = not decided yet. */
+    eventDate: text("event_date"),
+    startTime: text("start_time").notNull(),
+    venue: text("venue").notNull(),
+    headcount: integer("headcount"),
+    eventType: text("event_type").notNull(),
+    /** JSON array of strings. */
+    menusJson: text("menus_json").notNull(),
+    budget: text("budget").notNull(),
+    requests: text("requests").notNull(),
+    referral: text("referral").notNull(),
+    consentAt: text("consent_at").notNull(),
+    quoteId: integer("quote_id").references(() => quotes.id, { onDelete: "set null" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    index("inquiries_ip_created_idx").on(t.ipHash, t.createdAt),
+    index("inquiries_quote_idx").on(t.quoteId),
+  ],
+);
