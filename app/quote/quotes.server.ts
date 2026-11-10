@@ -443,7 +443,6 @@ export async function deleteQuote(db: Db, quoteId: number): Promise<void> {
   if (deleted.length === 0) throw new DomainError("NOT_FOUND", "견적을 찾을 수 없어요.");
 }
 
-/** Which of these quotes still exist (a comparison keeps own rows of quotes deleted since). */
 /** Whether the quote was made from a site inquiry. Reads only the link, never the contact. */
 export async function isSiteQuote(db: Db, quoteId: number): Promise<boolean> {
   const [row] = await db
@@ -454,6 +453,7 @@ export async function isSiteQuote(db: Db, quoteId: number): Promise<boolean> {
   return row !== undefined;
 }
 
+/** Which of these quotes still exist (a comparison keeps own rows of quotes deleted since). */
 export async function existingQuoteIds(db: Db, ids: number[]): Promise<number[]> {
   const wanted = [...new Set(ids)];
   if (wanted.length === 0) return [];
