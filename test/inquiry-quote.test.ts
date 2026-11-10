@@ -58,10 +58,10 @@ describe("applyInquiryContact", () => {
     expect(applyInquiryContact(event, null)).toEqual(event);
   });
 
-  it("drops missing items about contact, mail or the person in charge", () => {
+  it("drops missing items about contact, phone, name, mail or the person in charge", () => {
     const out = applyInquiryContact(
       baseEvent({
-        missing: ["연락처를 알려 주실 수 있나요?", "회신받을 메일 주소가 필요해요", "담당자 성함이 없어요", "예산을 알려 주실 수 있나요?"],
+        missing: ["연락처를 알려 주실 수 있나요?", "회신받을 메일 주소가 필요해요", "담당자 성함이 없어요", "전화번호를 알려 주세요", "성함을 알려 주세요", "예산을 알려 주실 수 있나요?"],
       }),
       CONTACT,
     );

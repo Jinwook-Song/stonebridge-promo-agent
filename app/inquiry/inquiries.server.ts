@@ -5,6 +5,9 @@ import type { QuoteEvent } from "../quote/types";
 import type { Db } from "../server/db";
 import { inquiryInputSchema, inquiryToQuoteText } from "./schema";
 
+/** Appended to the quote text: the contact came through the form and is kept outside the model's reach. */
+const CONTACT_NOTE = "연락처: 문의 양식으로 받았어요(따로 저장)";
+
 /** Sender limit: this many inquiries per ipHash within RATE_WINDOW_MS are stored, the next is refused. */
 export const RATE_LIMIT = 5;
 const RATE_WINDOW_MS = 60 * 60 * 1000;
@@ -18,7 +21,8 @@ export type SubmitResult =
 
 /** Event fields only: what the "new inquiry" alert may say. Never name, phone or email. */
 export type NewInquiryInfo = {
-  quoteId: number;
+  /** null when the inquiry is stored but its quote could not be made. */
+  quoteId: number | null;
   org: string;
   eventDate: string | null;
   headcount: number | null;
@@ -123,19 +127,25 @@ export async function submitInquiry(
     throw new Error("INQUIRY_STORE_FAILED");
   }
 
-  let quoteId: number;
+  let quoteId: number | null = null;
   try {
-    ({ quoteId } = await createQuote(db, { text: inquiryToQuoteText(v), source: "app" }, now));
+    // The last line is not from the customer's fields: it tells the drafting step the contact is
+    // already stored, so the reply email does not ask for it again.
+    const text = `${inquiryToQuoteText(v)}\n${CONTACT_NOTE}`;
+    ({ quoteId } = await createQuote(db, { text, source: "app" }, now));
     await db.update(inquiries).set({ quoteId }).where(eq(inquiries.id, inquiryId));
   } catch (e) {
     console.error("inquiry quote failed", { inquiryId, error: errName(e) });
-    return { ok: true, inquiryId };
+    // The quote may exist but be unlinked (the update failed): do not start it, still tell the owner.
+    quoteId = null;
   }
 
-  try {
-    await deps.startGeneration(quoteId);
-  } catch (e) {
-    console.error("inquiry quote generation did not start", { inquiryId, quoteId, error: errName(e) });
+  if (quoteId !== null) {
+    try {
+      await deps.startGeneration(quoteId);
+    } catch (e) {
+      console.error("inquiry quote generation did not start", { inquiryId, quoteId, error: errName(e) });
+    }
   }
   try {
     await deps.notify({ quoteId, org: v.org, eventDate: v.eventDate, headcount: v.headcount });
@@ -219,7 +229,7 @@ export async function purgeOldInquiries(db: Db, now: Date): Promise<number> {
 type InquiryContact = { contactName: string; org: string; phone: string; email: string };
 
 /** A question the model left in `missing` about what the inquiry form already gave. */
-const CONTACT_QUESTION = /연락처|메일|담당자/;
+const CONTACT_QUESTION = /연락처|메일|담당자|전화|성함/;
 
 /**
  * The event of a quote that came from a site inquiry, with the contact the customer typed written

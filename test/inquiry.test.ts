@@ -122,6 +122,33 @@ describe("submitInquiry", () => {
     expect(v.inputText).not.toContain("test@example.com");
     expect(v.inputText).not.toContain("김예시");
     expect(v.inputText).not.toContain("token-1");
+    // Tells the drafting step the contact is already stored, so the reply does not ask again.
+    expect(v.inputText?.split("\n").at(-1)).toBe("연락처: 문의 양식으로 받았어요(따로 저장)");
+  });
+
+  it("quote creation failure keeps the inquiry and still notifies with a null quoteId", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const broken = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "batch") return () => Promise.reject(new Error("d1 down"));
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const { deps, startGeneration, notify } = makeDeps({ db: broken });
+    const res = await submitInquiry(deps, raw(), META, NOW);
+
+    expect(res.ok).toBe(true);
+    const [row] = await allInquiries();
+    expect(row.quoteId).toBeNull();
+    expect(startGeneration).not.toHaveBeenCalled();
+    expect(notify).toHaveBeenCalledExactlyOnceWith({
+      quoteId: null,
+      org: "예시 학원",
+      eventDate: "2026-12-01",
+      headcount: 40,
+    });
+    expect(err).toHaveBeenCalled();
   });
 
   it("same clientToken returns the first inquiry and creates one quote", async () => {

@@ -22,6 +22,7 @@ beforeEach(async () => {
         "channel_rules",
         "owner_password_hash",
         "alert_draft_ready_enabled",
+        "alert_inquiry_enabled",
         "alert_monthly_day",
         "alert_monthly_day2",
       ]),
@@ -142,6 +143,16 @@ describe("settings action: setAlert", () => {
     const [row] = await db.select().from(settings).where(eq(settings.key, "alert_draft_ready_enabled"));
     expect(row.value).toBe("1");
     expect((await getAlertSettings(db)).draftReadyEnabled).toBe(true);
+  });
+
+  it("new_inquiry is off until switched on, then stores 1 and reads back as enabled", async () => {
+    expect((await getAlertSettings(db)).inquiryEnabled).toBe(false);
+    await post({ intent: "setAlert", kind: "new_inquiry", enabled: "1" });
+    const [row] = await db.select().from(settings).where(eq(settings.key, "alert_inquiry_enabled"));
+    expect(row.value).toBe("1");
+    expect((await getAlertSettings(db)).inquiryEnabled).toBe(true);
+    await post({ intent: "setAlert", kind: "new_inquiry", enabled: "0" });
+    expect((await getAlertSettings(db)).inquiryEnabled).toBe(false);
   });
 
   it("unknown kind is still rejected and stores nothing", async () => {

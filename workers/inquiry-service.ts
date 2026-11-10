@@ -1,5 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { submitInquiry, type SubmitResult } from "../app/inquiry/inquiries.server";
+import { kakaoConfig } from "../app/kakao/link.server";
+import { notifyNewInquiry } from "../app/kakao/new-inquiry.server";
 import { startQuoteGeneration } from "../app/quote/generate.server";
 import { getDb } from "../app/server/db";
 
@@ -15,8 +17,13 @@ export class InquiryService extends WorkerEntrypoint<Env> {
       {
         db,
         startGeneration: (quoteId) => startQuoteGeneration(this.env, db, quoteId, 1),
-        // The "new inquiry" Kakao alert replaces this later; until then nothing is sent.
-        notify: async () => "disabled",
+        // Off unless the owner switched "사이트 새 문의" on in settings; never throws.
+        notify: (info) =>
+          notifyNewInquiry(
+            { db, cfg: kakaoConfig(this.env), origin: this.env.PUBLIC_ORIGIN, fetch: (u, i) => fetch(u, i) },
+            info,
+            new Date(),
+          ),
       },
       raw,
       meta,
