@@ -432,7 +432,22 @@ describe("site inquiry label", () => {
   it("the list carries only the label from the inquiry, no contact", async () => {
     const { deps } = makeDeps();
     await submitInquiry(deps, raw(), META, NOW);
-    const text = JSON.stringify(await listQuotes(db));
+    // A generated version holds the contact (written in by code after generation).
+    const [{ quoteId }] = await allInquiries();
+    await db
+      .update(quoteVersions)
+      .set({
+        status: "ready",
+        eventJson: JSON.stringify({
+          customerName: "예시 학원", contactName: "김예시", contact: "010-0000-0000", email: "test@example.com",
+          eventDate: "2026-12-01", headcount: 40, venue: "", eventType: "", budget: "", requests: "", missing: [],
+        }),
+        linesJson: "[]",
+      })
+      .where(eq(quoteVersions.quoteId, quoteId!));
+    const list = await listQuotes(db);
+    expect(list[0]).toMatchObject({ customerName: "예시 학원", fromSite: true });
+    const text = JSON.stringify(list);
     for (const secret of ["010-0000-0000", "test@example.com", "김예시"]) {
       expect(text).not.toContain(secret);
     }
