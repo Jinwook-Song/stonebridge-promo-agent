@@ -26,6 +26,9 @@ const DATE_ERROR = "행사 날짜를 골라 주세요. 아직 모르면 ‘미�
 const PAST_DATE_ERROR = "지난 날짜는 고를 수 없어요";
 const HEADCOUNT_ERROR = "인원은 1명부터 3000명까지 숫자로 적어 주세요. 아직 모르면 ‘미정’을 체크해 주세요";
 const PHONE_ERROR = "연락처를 숫자로 다시 확인해 주세요 (예: 010-1234-5678)";
+const TIME_RE = /^(([01]\d|2[0-3]):[0-5]\d)?$/;
+const END_TIME_ERROR = "끝나는 시간을 다시 확인해 주세요";
+const END_BEFORE_START_ERROR = "끝나는 시간은 시작 시간보다 늦게 골라 주세요";
 
 /** Today's date in Asia/Seoul as YYYY-MM-DD (Korea has no DST, so a fixed +9h is exact). */
 function seoulToday(now: Date): string {
@@ -62,7 +65,8 @@ const requiredText = (max: number, message: string) =>
  * `now` is only used for the "no past dates" rule; by default the clock is read at parse time.
  */
 export function inquiryInputSchema(now?: Date) {
-  return z.object({
+  return z
+    .object({
     contactName: requiredText(40, "이름을 40자 안으로 적어 주세요"),
     org: text(60, "기관·회사명은 60자 안으로 적어 주세요"),
     phone: z
@@ -87,7 +91,9 @@ export function inquiryInputSchema(now?: Date) {
       }),
     startTime: z
       .string({ error: "시작 시간을 다시 확인해 주세요" })
-      .regex(/^(([01]\d|2[0-3]):[0-5]\d)?$/, "시작 시간을 다시 확인해 주세요"),
+      .regex(TIME_RE, "시작 시간을 다시 확인해 주세요"),
+    // Optional with a "" default: a sender that predates the field still validates.
+    endTime: z.string({ error: END_TIME_ERROR }).regex(TIME_RE, END_TIME_ERROR).default(""),
     venue: requiredText(100, "장소를 100자 안으로 적어 주세요"),
     headcount: z
       .number({ error: HEADCOUNT_ERROR })
@@ -105,7 +111,13 @@ export function inquiryInputSchema(now?: Date) {
       .string({ error: "페이지를 새로고침한 뒤 다시 보내 주세요" })
       .min(1, "페이지를 새로고침한 뒤 다시 보내 주세요")
       .max(64, "페이지를 새로고침한 뒤 다시 보내 주세요"),
-  });
+    })
+    .superRefine((v, ctx) => {
+      // HH:MM strings compare in time order.
+      if (v.startTime && v.endTime && v.endTime <= v.startTime) {
+        ctx.addIssue({ code: "custom", path: ["endTime"], message: END_BEFORE_START_ERROR });
+      }
+    });
 }
 
 export const InquiryInputSchema = inquiryInputSchema();
@@ -152,6 +164,7 @@ export function parseInquiryForm(raw: Raw, now: Date = new Date()): InquiryParse
     email: str(raw, "email"),
     eventDate: checked(raw, "eventDateUnknown") ? null : str(raw, "eventDate").trim(),
     startTime: str(raw, "startTime").trim(),
+    endTime: str(raw, "endTime").trim(),
     venue: str(raw, "venue"),
     headcount: checked(raw, "headcountUnknown")
       ? null
@@ -187,7 +200,7 @@ export function inquiryToQuoteText(v: InquiryInput): string {
   const rows: [string, string][] = [
     ["기관", v.org],
     ["날짜", v.eventDate ?? "미정"],
-    ["시간", v.startTime],
+    ["시간", v.endTime ? `${v.startTime}~${v.endTime}` : v.startTime],
     ["장소", v.venue],
     ["인원", v.headcount === null ? "미정" : `${v.headcount}명`],
     ["행사 성격", v.eventType],

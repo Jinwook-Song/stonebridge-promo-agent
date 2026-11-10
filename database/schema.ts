@@ -352,6 +352,8 @@ export const inquiries = sqliteTable(
     /** YYYY-MM-DD; null = not decided yet. */
     eventDate: text("event_date"),
     startTime: text("start_time").notNull(),
+    /** HH:MM or "" (not given). Added after launch, so older rows read "". */
+    endTime: text("end_time").notNull().default(""),
     venue: text("venue").notNull(),
     headcount: integer("headcount"),
     eventType: text("event_type").notNull(),

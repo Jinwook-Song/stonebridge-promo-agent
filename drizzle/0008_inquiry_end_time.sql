@@ -1,0 +1,1 @@
+ALTER TABLE `inquiries` ADD `end_time` text DEFAULT '' NOT NULL;
