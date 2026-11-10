@@ -41,8 +41,14 @@ function raw(over: Record<string, unknown> = {}) {
 function makeDeps(over: Partial<SubmitDeps> = {}) {
   const startGeneration = vi.fn(async (_quoteId: number) => {});
   const notify = vi.fn(async (_info: unknown) => "disabled");
-  const deps: SubmitDeps = { db, startGeneration, notify, ...over };
-  return { deps, startGeneration, notify };
+  // What would run after the response (ctx.waitUntil); `settle` awaits it.
+  const deferred: Promise<unknown>[] = [];
+  const defer = vi.fn((work: Promise<unknown>) => {
+    deferred.push(work);
+  });
+  const deps: SubmitDeps = { db, startGeneration, notify, defer, ...over };
+  const settle = () => Promise.all(deferred);
+  return { deps, startGeneration, notify, defer, settle };
 }
 
 const META = { ipHash: "hash-a" };
@@ -203,16 +209,51 @@ describe("submitInquiry", () => {
 
   it("notify failure still returns ok", async () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { deps } = makeDeps({
+    const { deps, settle } = makeDeps({
       notify: async () => {
         throw new Error("kakao down");
       },
     });
     const res = await submitInquiry(deps, raw(), META, NOW);
+    await settle();
 
     expect(res.ok).toBe(true);
     expect(await allInquiries()).toHaveLength(1);
-    expect(err).toHaveBeenCalled();
+    expect(err).toHaveBeenCalledWith("inquiry alert failed", expect.objectContaining({ error: "Error" }));
+  });
+
+  it("returns before the alert is sent; the alert runs after the response", async () => {
+    let release!: () => void;
+    const sending = new Promise<void>((r) => (release = r));
+    let sent = false;
+    const notify = vi.fn(async () => {
+      await sending;
+      sent = true;
+    });
+    const { deps, defer, settle } = makeDeps({ notify });
+    const res = await submitInquiry(deps, raw(), META, NOW);
+
+    // The Kakao send is still pending, yet the site already has its answer.
+    expect(res.ok).toBe(true);
+    expect(sent).toBe(false);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(defer).toHaveBeenCalledTimes(1);
+
+    release();
+    await settle();
+    expect(sent).toBe(true);
+  });
+
+  it("a notify that throws at once is still caught and logged", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { deps, settle } = makeDeps({
+      notify: () => {
+        throw new Error("sync boom");
+      },
+    });
+    expect((await submitInquiry(deps, raw(), META, NOW)).ok).toBe(true);
+    await settle();
+    expect(err).toHaveBeenCalledWith("inquiry alert failed", expect.objectContaining({ error: "Error" }));
   });
 
   it("a failing read rejects with a bare INQUIRY_READ_FAILED and logs nothing with the ip hash", async () => {
@@ -276,7 +317,7 @@ describe("submitInquiry", () => {
       vi.spyOn(console, "log").mockImplementation(() => {}),
       vi.spyOn(console, "warn").mockImplementation(() => {}),
     ];
-    const { deps } = makeDeps({
+    const { deps, settle } = makeDeps({
       startGeneration: async () => {
         throw new Error("boom");
       },
@@ -285,6 +326,8 @@ describe("submitInquiry", () => {
       },
     });
     await submitInquiry(deps, raw(), META, NOW);
+    await settle();
+    expect(logs[0]).toHaveBeenCalledWith("inquiry alert failed", expect.anything());
     const text = JSON.stringify(logs.flatMap((l) => l.mock.calls.map((c) => c.map(String))));
     for (const secret of ["010-0000-0000", "test@example.com", "김예시", "hash-a"]) {
       expect(text).not.toContain(secret);
@@ -361,7 +404,13 @@ describe("purgeOldInquiries", () => {
 describe("InquiryService", () => {
   it("submit stores through the real bindings; fetch is a 404", async () => {
     const startGeneration = vi.fn();
-    const svc = new InquiryService({ waitUntil() {}, passThroughOnException() {}, props: {} } as unknown as ExecutionContext, {
+    const deferred: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => deferred.push(p),
+      passThroughOnException() {},
+      props: {},
+    } as unknown as ExecutionContext;
+    const svc = new InquiryService(ctx, {
       ...env,
       // No real Workflow in this test; startQuoteGeneration reports the failure on the version.
       QUOTE_GENERATE: {
@@ -376,6 +425,9 @@ describe("InquiryService", () => {
     expect(res.ok).toBe(true);
     expect(startGeneration).toHaveBeenCalledTimes(1);
     expect(await allInquiries()).toHaveLength(1);
+    // The Kakao alert went to waitUntil, not the response path; it settles (off by default).
+    expect(deferred).toHaveLength(1);
+    await Promise.all(deferred);
     expect((await svc.fetch()).status).toBe(404);
   });
 });

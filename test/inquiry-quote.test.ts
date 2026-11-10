@@ -121,7 +121,7 @@ async function run(quoteId: number, version: number, d: QuoteGenDeps, now = T0) 
 /** An inquiry and the quote it made, as submitInquiry leaves them (generation not started). */
 async function inquiryQuote(): Promise<number> {
   const res = await submitInquiry(
-    { db, startGeneration: async () => {}, notify: async () => "disabled" },
+    { db, startGeneration: async () => {}, notify: async () => "disabled", defer: () => {} },
     {
       ...CONTACT,
       eventDate: "2026-12-01",
