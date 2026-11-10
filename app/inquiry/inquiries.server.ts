@@ -68,14 +68,21 @@ export async function submitInquiry(
   }
   const v = { ...parsed.data, menus: [...new Set(parsed.data.menus)] };
 
-  const existing = await findByToken(db, v.clientToken);
-  if (existing !== null) return { ok: true, inquiryId: existing };
-
-  const since = new Date(now.getTime() - RATE_WINDOW_MS).toISOString();
-  const [{ recent }] = await db
-    .select({ recent: count() })
-    .from(inquiries)
-    .where(and(eq(inquiries.ipHash, meta.ipHash), gte(inquiries.createdAt, since)));
+  // Both reads carry the sender's ipHash or token as query parameters, and drizzle puts those in
+  // its error message: rethrown without the cause.
+  let recent: number;
+  try {
+    const existing = await findByToken(db, v.clientToken);
+    if (existing !== null) return { ok: true, inquiryId: existing };
+    const since = new Date(now.getTime() - RATE_WINDOW_MS).toISOString();
+    [{ recent }] = await db
+      .select({ recent: count() })
+      .from(inquiries)
+      .where(and(eq(inquiries.ipHash, meta.ipHash), gte(inquiries.createdAt, since)));
+  } catch (e) {
+    console.error("inquiry read failed", { error: errName(e) });
+    throw new Error("INQUIRY_READ_FAILED");
+  }
   if (recent >= RATE_LIMIT) return { ok: false, code: "RATE_LIMITED" };
 
   const at = now.toISOString();

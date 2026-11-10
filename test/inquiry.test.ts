@@ -188,6 +188,33 @@ describe("submitInquiry", () => {
     expect(err).toHaveBeenCalled();
   });
 
+  it("a failing read rejects with a bare INQUIRY_READ_FAILED and logs nothing with the ip hash", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const leaky = () => new Error("Failed query: select ... params: secret-hash-zz,2026-11-10");
+    // Fails on the token lookup (1st read), then on the rate-limit count (2nd read).
+    for (const failAt of [0, 1]) {
+      let reads = 0;
+      const flaky = {
+        select: (...args: unknown[]) => {
+          if (reads++ === failAt) throw leaky();
+          return (db.select as (...a: unknown[]) => unknown)(...args);
+        },
+      } as unknown as SubmitDeps["db"];
+      const { deps, startGeneration } = makeDeps({ db: flaky });
+      const caught = await submitInquiry(deps, raw(), { ipHash: "secret-hash-zz" }, NOW).catch((e) => e);
+      expect(caught).toBeInstanceOf(Error);
+      expect((caught as Error).message).toBe("INQUIRY_READ_FAILED");
+      expect((caught as Error).cause).toBeUndefined();
+      expect(startGeneration).not.toHaveBeenCalled();
+    }
+    for (const spy of [err, log, warn]) {
+      expect(JSON.stringify(spy.mock.calls)).not.toContain("secret-hash-zz");
+    }
+    expect(await allInquiries()).toHaveLength(0);
+  });
+
   it("invalid input is INVALID and stores nothing", async () => {
     const { deps, startGeneration } = makeDeps();
     for (const bad of [
