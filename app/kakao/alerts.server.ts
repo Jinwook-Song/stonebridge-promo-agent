@@ -1,5 +1,6 @@
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { alertLog, settings } from "../../database/schema";
+import type { NewInquiryInfo } from "../inquiry/inquiries.server";
 import type { Db } from "../server/db";
 import type { Fetch, KakaoConfig, MemoMessage } from "./client.server";
 import { describeKakaoError, getLink, keepAlive, sendToMe } from "./link.server";
@@ -26,6 +27,8 @@ export type AlertSettings = {
   monthlyDay2: number | null;
   /** Message when a full draft is ready. On unless switched off: she asked for it by uploading. */
   draftReadyEnabled: boolean;
+  /** Message when a site inquiry arrives. Off unless switched on: no pings before the owner opts in. */
+  inquiryEnabled: boolean;
 };
 
 const KEYS = {
@@ -34,6 +37,7 @@ const KEYS = {
   monthlyDay: "alert_monthly_day",
   monthlyDay2: "alert_monthly_day2",
   draftReadyEnabled: "alert_draft_ready_enabled",
+  inquiryEnabled: "alert_inquiry_enabled",
 } as const satisfies Record<keyof AlertSettings, string>;
 
 const DEFAULT_MONTHLY_DAY = 1;
@@ -52,6 +56,8 @@ export async function getAlertSettings(db: Db): Promise<AlertSettings> {
     monthlyDay2: day2 === day ? null : day2,
     // Only an explicit "0" turns it off; no row yet means on.
     draftReadyEnabled: byKey.get(KEYS.draftReadyEnabled) !== "0",
+    // Unlike draft-ready: no row means off.
+    inquiryEnabled: byKey.get(KEYS.inquiryEnabled) === "1",
   };
 }
 
@@ -75,6 +81,9 @@ export async function saveAlertSettings(db: Db, patch: Partial<AlertSettings>): 
   }
   if (patch.draftReadyEnabled !== undefined) {
     values.push({ key: KEYS.draftReadyEnabled, value: patch.draftReadyEnabled ? "1" : "0" });
+  }
+  if (patch.inquiryEnabled !== undefined) {
+    values.push({ key: KEYS.inquiryEnabled, value: patch.inquiryEnabled ? "1" : "0" });
   }
   if (values.length === 0) return;
   await db
@@ -105,16 +114,36 @@ export type DraftReadyInfo = { postId: number; memo: string };
 
 export function alertMessage(kind: AlertKind | "test", origin: string): MemoMessage;
 export function alertMessage(kind: "draft_ready", origin: string, info: DraftReadyInfo): MemoMessage;
-export function alertMessage(kind: AlertKind | "test" | "draft_ready", origin: string, info?: DraftReadyInfo): MemoMessage {
+export function alertMessage(kind: "new_inquiry", origin: string, info: NewInquiryInfo): MemoMessage;
+export function alertMessage(
+  kind: AlertKind | "test" | "draft_ready" | "new_inquiry",
+  origin: string,
+  info?: DraftReadyInfo | NewInquiryInfo,
+): MemoMessage {
   const base = origin.replace(/\/+$/, "");
   switch (kind) {
+    case "new_inquiry": {
+      // Event fields only: the chat history is not where a customer's name, phone or email belong.
+      const q = info as NewInquiryInfo;
+      // One line, like draft_ready: a line break in the org would split the message.
+      const who = q.org.replace(/\s+/g, " ").trim() || "개인";
+      const when = q.eventDate ?? "날짜 미정";
+      const size = q.headcount ? `${q.headcount}명` : "인원 미정";
+      return {
+        text: `새 견적 문의가 왔어요\n${who} · ${when} · ${size}`,
+        // No quote when its creation failed: the list still shows what came in.
+        url: q.quoteId === null ? `${base}/quotes` : `${base}/quotes/${q.quoteId}`,
+        buttonTitle: "견적 열기",
+      };
+    }
     case "draft_ready": {
       // One line: a memo's line breaks would push the button text down in the chat bubble.
-      const memo = info!.memo.replace(/\s+/g, " ").trim();
+      const { postId, memo: rawMemo } = info as DraftReadyInfo;
+      const memo = rawMemo.replace(/\s+/g, " ").trim();
       // Code points, not UTF-16 units, so an emoji is never cut in half.
       const chars = [...memo];
       const preview = chars.length > MEMO_PREVIEW_CHARS ? `${chars.slice(0, MEMO_PREVIEW_CHARS).join("")}…` : memo;
-      return { text: `홍보글 초안이 준비됐어요\n${preview}`, url: `${base}/posts/${info!.postId}`, buttonTitle: "초안 보기" };
+      return { text: `홍보글 초안이 준비됐어요\n${preview}`, url: `${base}/posts/${postId}`, buttonTitle: "초안 보기" };
     }
     case "order":
       return { text: "쿠팡 발주할 시간이에요\n카페 재료 주문 잊지 마세요.", url: `${base}/`, buttonTitle: "앱 열기" };

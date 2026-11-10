@@ -50,6 +50,13 @@
       "when": 1794222192286,
       "tag": "0006_owner_questions",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1794277326243,
+      "tag": "0007_inquiries",
+      "breakpoints": true
     }
   ]
 }

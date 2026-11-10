@@ -107,14 +107,16 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
         break;
       case "setAlert": {
         const enabled = str("enabled") === "1";
-        const kind = oneOf(["order", "monthly", "draft_ready"] as const, form.get("kind"));
+        const kind = oneOf(["order", "monthly", "draft_ready", "new_inquiry"] as const, form.get("kind"));
         await saveAlertSettings(
           db,
           kind === "order"
             ? { orderEnabled: enabled }
             : kind === "monthly"
               ? { monthlyEnabled: enabled }
-              : { draftReadyEnabled: enabled },
+              : kind === "draft_ready"
+                ? { draftReadyEnabled: enabled }
+                : { inquiryEnabled: enabled },
         );
         break;
       }
@@ -445,6 +447,12 @@ function KakaoSection({ kakao }: { kakao: KakaoView }) {
         canSend={ready}
       />
       <AlertToggle
+        kind="new_inquiry"
+        enabled={kakao.alerts.inquiryEnabled}
+        description="스톤테이블 사이트로 문의가 오면 카톡으로 알려 드려요"
+        canSend={ready}
+      />
+      <AlertToggle
         kind="order"
         enabled={kakao.alerts.orderEnabled}
         description="매일 밤 11시 20분, 쿠팡 발주 알림"
@@ -479,9 +487,10 @@ function KakaoSection({ kakao }: { kakao: KakaoView }) {
 
 const TOGGLE_LABELS = {
   draft_ready: "초안 완성 알림",
+  new_inquiry: "사이트 새 문의",
   order: ALERT_LABELS.order,
   monthly: ALERT_LABELS.monthly,
-} as const satisfies Record<AlertKind | "draft_ready", string>;
+} as const satisfies Record<AlertKind | "draft_ready" | "new_inquiry", string>;
 
 function AlertToggle({
   kind,
@@ -490,7 +499,7 @@ function AlertToggle({
   canSend,
   children,
 }: {
-  kind: AlertKind | "draft_ready";
+  kind: AlertKind | "draft_ready" | "new_inquiry";
   enabled: boolean;
   description: string;
   canSend: boolean;

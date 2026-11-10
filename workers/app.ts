@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { createRequestHandler } from "react-router";
+import { purgeOldInquiries } from "../app/inquiry/inquiries.server";
 import { runScheduled } from "../app/kakao/alerts.server";
 import { kakaoConfig } from "../app/kakao/link.server";
 import { canonicalRedirect } from "../app/server/canonical-host";
@@ -47,6 +48,14 @@ export default {
     const now = new Date(controller.scheduledTime);
     if (controller.cron === WATCH_CRON) {
       console.log(`competitor watch ${controller.cron}: ${await startWatchRun(env.WATCH, now)}`);
+      // Inquiries older than a year go here too. After the watch has started, and on its own: a
+      // purge failure must not affect the watch. Only the count or the error's class name is
+      // logged (a drizzle message carries query parameters, i.e. customer contact).
+      try {
+        console.log(`inquiry purge: ${await purgeOldInquiries(getDb(env.DB), now)} deleted`);
+      } catch (e) {
+        console.error("inquiry purge failed", { error: e instanceof Error ? e.name : typeof e });
+      }
       return;
     }
     const outcome = await runScheduled(controller.cron, now, {
@@ -61,5 +70,7 @@ export default {
 
 // Bound as GENERATE / QUOTE_GENERATE / WATCH in wrangler.jsonc.
 export { GeneratePostWorkflow } from "./generate-workflow";
+// RPC entrypoint the 스톤테이블 사이트 calls through a service binding.
+export { InquiryService } from "./inquiry-service";
 export { QuoteGenerateWorkflow } from "./quote-workflow";
 export { WatchWorkflow } from "./watch-workflow";

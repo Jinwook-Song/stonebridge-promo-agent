@@ -52,7 +52,7 @@ beforeEach(async () => {
   await db.delete(kakaoLink);
   await db
     .delete(settings)
-    .where(inArray(settings.key, ["alert_order_enabled", "alert_monthly_enabled", "alert_monthly_day", "alert_monthly_day2", "alert_draft_ready_enabled"]));
+    .where(inArray(settings.key, ["alert_order_enabled", "alert_monthly_enabled", "alert_monthly_day", "alert_monthly_day2", "alert_draft_ready_enabled", "alert_inquiry_enabled"]));
 });
 
 afterEach(() => {
@@ -79,6 +79,7 @@ describe("alert settings", () => {
       monthlyDay: 1,
       monthlyDay2: null,
       draftReadyEnabled: true,
+      inquiryEnabled: false,
     });
   });
 
@@ -92,6 +93,7 @@ describe("alert settings", () => {
       monthlyDay: 15,
       monthlyDay2: null,
       draftReadyEnabled: true,
+      inquiryEnabled: false,
     });
   });
 
