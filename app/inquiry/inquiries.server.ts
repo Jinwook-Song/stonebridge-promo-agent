@@ -129,8 +129,9 @@ export async function submitInquiry(
 
   let quoteId: number | null = null;
   try {
-    // The last line is not from the customer's fields: it tells the drafting step the contact is
-    // already stored, so the reply email does not ask for it again.
+    // The last line is not from the customer's fields: it shows the owner (in the quote's input)
+    // that the contact is stored apart. The model is told by the program notice outside the fence
+    // (contactOnFile in buildQuoteUser), since inside <문의글> every line is data to it.
     const text = `${inquiryToQuoteText(v)}\n${CONTACT_NOTE}`;
     ({ quoteId } = await createQuote(db, { text, source: "app" }, now));
     await db.update(inquiries).set({ quoteId }).where(eq(inquiries.id, inquiryId));
