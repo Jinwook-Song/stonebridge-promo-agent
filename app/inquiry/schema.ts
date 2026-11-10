@@ -28,7 +28,7 @@ const HEADCOUNT_ERROR = "인원은 1명부터 3000명까지 숫자로 적어 주
 const PHONE_ERROR = "연락처를 숫자로 다시 확인해 주세요 (예: 010-1234-5678)";
 const TIME_RE = /^(([01]\d|2[0-3]):[0-5]\d)?$/;
 const END_TIME_ERROR = "끝나는 시간을 다시 확인해 주세요";
-const END_BEFORE_START_ERROR = "끝나는 시간은 시작 시간보다 늦게 골라 주세요";
+const END_BEFORE_START_ERROR = "시작 시간보다 늦게 골라 주세요";
 
 /** Today's date in Asia/Seoul as YYYY-MM-DD (Korea has no DST, so a fixed +9h is exact). */
 function seoulToday(now: Date): string {
