@@ -110,6 +110,7 @@ export async function submitInquiry(
         email: v.email,
         eventDate: v.eventDate,
         startTime: v.startTime,
+        endTime: v.endTime,
         venue: v.venue,
         headcount: v.headcount,
         eventType: v.eventType,

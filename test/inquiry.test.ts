@@ -118,6 +118,23 @@ describe("submitInquiry", () => {
     expect(await inquiryForQuote(db, qs[0].id + 999)).toBeNull();
   });
 
+  it("stores the end time and puts start~end on one line of the quote input", async () => {
+    const { deps } = makeDeps();
+    await submitInquiry(deps, raw({ endTime: "16:30" }), META, NOW);
+    const [row] = await allInquiries();
+    expect(row.endTime).toBe("16:30");
+    const [v] = await db.select().from(quoteVersions);
+    expect(v.inputText).toContain("시간: 14:00~16:30");
+  });
+
+  it("a sender without endTime stores an empty end time; an end before the start is refused", async () => {
+    const { deps } = makeDeps();
+    expect((await submitInquiry(deps, raw(), META, NOW)).ok).toBe(true);
+    expect((await allInquiries())[0].endTime).toBe("");
+    const bad = await submitInquiry(deps, raw({ clientToken: "token-2", endTime: "13:00" }), META, NOW);
+    expect(bad).toEqual({ ok: false, code: "INVALID" });
+  });
+
   it("quote input text has no phone, email or name", async () => {
     const { deps } = makeDeps();
     await submitInquiry(deps, raw(), META, NOW);
