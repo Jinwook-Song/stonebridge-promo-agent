@@ -6,7 +6,7 @@ import { inquiries, priceItems, quotes, quoteVersions } from "../database/schema
 import { applyInquiryContact, stripContact, submitInquiry } from "../app/inquiry/inquiries.server";
 import type { QuoteCall } from "../app/promo/claude.server";
 import { runQuoteGeneration, startQuoteGeneration, type QuoteGenDeps, type QuoteRunRef } from "../app/quote/generate.server";
-import type { QuoteOutput } from "../app/quote/prompt";
+import { CONTACT_ON_FILE_HEADING, type QuoteOutput } from "../app/quote/prompt";
 import { createQuote, getQuote, requestRevision } from "../app/quote/quotes.server";
 import type { QuoteEvent } from "../app/quote/types";
 import { getDb } from "../app/server/db";
@@ -259,6 +259,35 @@ describe("quotes made from an inquiry", () => {
     // Same end state as any other failed save: the version is failed and can be retried.
     const { version } = await getQuote(db, quoteId, 1);
     expect(version.status).toBe("failed");
+  });
+
+  it("v1 and v2 of an inquiry quote tell the model, outside the inquiry fence, that the contact is on file", async () => {
+    const users: string[] = [];
+    const quote: QuoteCall = async (req) => {
+      users.push(req.user.map((b: Anthropic.ContentBlockParam) => (b.type === "text" ? b.text : "")).join("\n"));
+      return { output: output(), inputTokens: 1, outputTokens: 1 };
+    };
+    const quoteId = await inquiryQuote();
+    await run(quoteId, 1, deps(quote));
+    await requestRevision(db, quoteId, "인원을 50명으로 바꿔 주세요", T1);
+    await run(quoteId, 2, deps(quote), T2);
+
+    expect(users).toHaveLength(2);
+    for (const text of users) {
+      const notice = text.indexOf(CONTACT_ON_FILE_HEADING);
+      expect(notice).toBeGreaterThan(text.indexOf("</문의글>"));
+    }
+  });
+
+  it("a quote that did not come from an inquiry gets no contact-on-file notice", async () => {
+    const users: string[] = [];
+    const quote: QuoteCall = async (req) => {
+      users.push(req.user.map((b: Anthropic.ContentBlockParam) => (b.type === "text" ? b.text : "")).join("\n"));
+      return { output: output(), inputTokens: 1, outputTokens: 1 };
+    };
+    const { quoteId } = await createQuote(db, { text: "12월 1일 학원 다과 40명", source: "app" }, T0);
+    await run(quoteId, 1, deps(quote));
+    expect(users[0]).not.toContain(CONTACT_ON_FILE_HEADING);
   });
 
   it("a non-inquiry quote's v2 prompt still carries the previous event as it was", async () => {

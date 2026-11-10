@@ -17,6 +17,7 @@ import {
   buildImportUser,
   buildQuoteSystem,
   buildQuoteUser,
+  CONTACT_ON_FILE_HEADING,
   ImportOutput,
   QuoteOutput,
 } from "../app/quote/prompt";
@@ -684,6 +685,21 @@ describe("prompt", () => {
     expect(text).toContain("오후 3시 도착");
     expect(text).not.toContain("지난 버전 제안");
     expect(text).not.toContain(`"tip"`);
+  });
+
+  it("contactOnFile adds a program notice after the inquiry fence; without it there is none", () => {
+    const base = { text: "견적", sheet: [], candidates: [], prev: null, changeRequest: null };
+    const on = textOf(buildQuoteUser({ ...base, contactOnFile: true }));
+    expect(on.indexOf(CONTACT_ON_FILE_HEADING)).toBeGreaterThan(on.indexOf("</문의글>"));
+    expect(textOf(buildQuoteUser(base))).not.toContain(CONTACT_ON_FILE_HEADING);
+    expect(textOf(buildQuoteUser({ ...base, contactOnFile: false }))).not.toContain(CONTACT_ON_FILE_HEADING);
+  });
+
+  it("system prompt tells the model not to ask for a contact that is on file", () => {
+    const system = buildQuoteSystem();
+    expect(system).toContain(CONTACT_ON_FILE_HEADING);
+    expect(system).toContain("missing에 넣지 않는다");
+    expect(system).toContain("메일에서 묻지 않는다");
   });
 
   it("system prompt splits the customer note from the owner-only tip", () => {

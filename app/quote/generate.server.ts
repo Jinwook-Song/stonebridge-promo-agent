@@ -196,7 +196,14 @@ async function quoteVersion(
 
   const { output, inputTokens, outputTokens } = await deps.quote({
     system: buildQuoteSystem(),
-    user: buildQuoteUser({ text: row.inputText, sheet, candidates, prev, changeRequest: row.changeRequest }),
+    user: buildQuoteUser({
+      text: row.inputText,
+      sheet,
+      candidates,
+      prev,
+      changeRequest: row.changeRequest,
+      contactOnFile: inquiry !== null,
+    }),
   });
 
   const lines = buildLines(output.lines, sheet, prev?.lines ?? null);
