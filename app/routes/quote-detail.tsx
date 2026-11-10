@@ -3,6 +3,7 @@ import { CheckIcon, CircleAlertIcon, CopyIcon, DownloadIcon, LoaderCircleIcon, R
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { data, Link, redirect, useFetcher } from "react-router";
 import type { Route } from "./+types/quote-detail";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -24,6 +25,7 @@ import {
   existingQuoteIds,
   getQuote,
   isFreshClaim,
+  isSiteQuote,
   requestRevision,
   saveEvent,
   saveLines,
@@ -66,7 +68,11 @@ export async function loader({ params, request }: Route.LoaderArgs) {
     throw e;
   }
   const ownIds = (view.version.comparison?.rows ?? []).map(ownQuoteId).filter((n) => n !== null);
-  const [items, liveQuoteIds] = await Promise.all([listPriceItems(db), existingQuoteIds(db, ownIds)]);
+  const [items, liveQuoteIds, fromSite] = await Promise.all([
+    listPriceItems(db),
+    existingQuoteIds(db, ownIds),
+    isSiteQuote(db, id),
+  ]);
   const sheet = items.filter((s) => s.enabled);
 
   const latest = view.versions.at(-1)!;
@@ -88,6 +94,7 @@ export async function loader({ params, request }: Route.LoaderArgs) {
       note: s.note,
     })),
     liveQuoteIds,
+    fromSite,
     // Every item's kind, switched-off ones too: a line keeps its item after the item is switched off.
     itemKinds: items.map((s) => [s.id, s.kind] as [number, PriceKind]),
     latestVersion: latest.version,
@@ -175,7 +182,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 type Loaded = Route.ComponentProps["loaderData"];
 
 export default function QuoteDetail({ loaderData }: Route.ComponentProps) {
-  const { quote, version, versions, isLatest, latestVersion, latestStatus, polling, retryable } = loaderData;
+  const { quote, version, versions, isLatest, latestVersion, latestStatus, polling, retryable, fromSite } = loaderData;
   useStatusPolling(quote.id, polling, { url: `/api/quotes/${quote.id}/status`, everyMs: 3000 });
 
   const ready = version.status === "ready" && version.lines !== null && version.event !== null;
@@ -190,6 +197,7 @@ export default function QuoteDetail({ loaderData }: Route.ComponentProps) {
           </Link>
           <span aria-hidden="true">·</span>
           <span>{formatDay(quote.createdAt)}</span>
+          {fromSite && <Badge variant="outline">사이트 문의</Badge>}
         </div>
         <h1 className="text-lg font-semibold break-words">{title || "견적"}</h1>
         <StatusPicker quoteId={quote.id} status={quote.status} />

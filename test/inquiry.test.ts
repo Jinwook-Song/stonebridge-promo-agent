@@ -8,6 +8,8 @@ import {
   submitInquiry,
   type SubmitDeps,
 } from "../app/inquiry/inquiries.server";
+import { createQuote, listQuotes } from "../app/quote/quotes.server";
+import { loader as detailLoader } from "../app/routes/quote-detail";
 import { getDb } from "../app/server/db";
 import { InquiryService } from "../workers/inquiry-service";
 
@@ -398,6 +400,42 @@ describe("purgeOldInquiries", () => {
 
     // Nothing left to purge.
     expect(await purgeOldInquiries(db, NOW)).toBe(0);
+  });
+});
+
+describe("site inquiry label", () => {
+  async function detail(quoteId: number) {
+    return (await detailLoader({
+      request: new Request(`http://localhost/quotes/${quoteId}`),
+      params: { id: String(quoteId) },
+      context: {},
+    } as never)) as { fromSite: boolean };
+  }
+
+  it("marks quotes made from a site inquiry, not the owner's own, in the list and the detail", async () => {
+    const { deps } = makeDeps();
+    expect((await submitInquiry(deps, raw(), META, NOW)).ok).toBe(true);
+    const [{ quoteId: siteId }] = await allInquiries();
+    const { quoteId: ownId } = await createQuote(db, { text: "직접 받은 문의", source: "app" }, NOW);
+
+    const list = await listQuotes(db);
+    expect(list.map((q) => [q.id, q.fromSite])).toEqual(
+      expect.arrayContaining([
+        [siteId, true],
+        [ownId, false],
+      ]),
+    );
+    expect((await detail(siteId!)).fromSite).toBe(true);
+    expect((await detail(ownId)).fromSite).toBe(false);
+  });
+
+  it("the list carries only the label from the inquiry, no contact", async () => {
+    const { deps } = makeDeps();
+    await submitInquiry(deps, raw(), META, NOW);
+    const text = JSON.stringify(await listQuotes(db));
+    for (const secret of ["010-0000-0000", "test@example.com", "김예시"]) {
+      expect(text).not.toContain(secret);
+    }
   });
 });
 
