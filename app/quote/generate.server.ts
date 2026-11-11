@@ -20,6 +20,7 @@ import { DomainError } from "../server/errors";
 import { selectCandidates } from "./comparison.server";
 import { buildLines, cleanQty, computeTotals, diffLines, MAX_LINES, storablePrice } from "./lines";
 import { listPriceItems } from "./price-sheet.server";
+import { getQuoteSettings } from "./quote-settings.server";
 import { buildImportSystem, buildImportUser, buildQuoteSystem, buildQuoteUser, type ImportOutput } from "./prompt";
 import { getQuote } from "./quotes.server";
 import type { Comparison, ComparisonRow, QuoteEvent, QuoteLine } from "./types";
@@ -183,7 +184,7 @@ async function quoteVersion(
     // must not see it. The save puts it back (applyInquiryContact).
     prev = { event: inquiry ? stripContact(before.event) : before.event, lines: before.lines };
   }
-  const [sheet, candidates] = await Promise.all([
+  const [sheet, candidates, { mailExample }] = await Promise.all([
     listPriceItems(db, { enabledOnly: true }),
     // v1: the event type is only known after this call, so candidates are ranked by the inquiry.
     selectCandidates(
@@ -192,6 +193,7 @@ async function quoteVersion(
       run.quoteId,
       { text: row.inputText },
     ),
+    getQuoteSettings(db),
   ]);
 
   const { output, inputTokens, outputTokens } = await deps.quote({
@@ -203,6 +205,7 @@ async function quoteVersion(
       prev,
       changeRequest: row.changeRequest,
       contactOnFile: inquiry !== null,
+      mailExample,
     }),
   });
 

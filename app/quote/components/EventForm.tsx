@@ -1,5 +1,5 @@
 import { CircleAlertIcon, XIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Field } from "../../components/ui/label";
@@ -31,6 +31,7 @@ export function EventForm({
   readOnly,
   onUnsavedChange,
   onHeadcountChange,
+  onEventChange,
 }: {
   quoteId: number;
   version: number;
@@ -40,6 +41,8 @@ export function EventForm({
   onUnsavedChange?: (state: SyncState) => void;
   /** Once per headcount change, when she leaves the box (the quote table moves its 1인 lines). */
   onHeadcountChange?: (from: number | null, to: number | null) => void;
+  /** The event as it is on screen, on every change (for the 보내기 전 확인 box). */
+  onEventChange?: (event: QuoteEvent) => void;
 }) {
   const [event, setEvent] = useState(initialEvent);
   const [headcountText, setHeadcountText] = useState(initialEvent.headcount === null ? "" : String(initialEvent.headcount));
@@ -47,6 +50,11 @@ export function EventForm({
   useReportSync(saver, onUnsavedChange);
 
   const lastHeadcount = useRef(initialEvent.headcount);
+  const eventReport = useRef(onEventChange);
+  eventReport.current = onEventChange;
+  useEffect(() => {
+    eventReport.current?.(event);
+  }, [event]);
 
   const set = (patch: Partial<QuoteEvent>) => setEvent((prev) => ({ ...prev, ...patch }));
 

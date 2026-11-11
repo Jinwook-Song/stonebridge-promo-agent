@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { CheckIcon, CircleAlertIcon, CopyIcon, DownloadIcon, LoaderCircleIcon, RefreshCwIcon } from "lucide-react";
+import { CheckIcon, CircleAlertIcon, CircleDotIcon, CopyIcon, DownloadIcon, LoaderCircleIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { data, Link, redirect, useFetcher } from "react-router";
 import type { Route } from "./+types/quote-detail";
@@ -20,6 +20,7 @@ import { LinesTable, type LinesHandle } from "../quote/components/LinesTable";
 import { useJsonSaver, useReportSync, type QuoteActionResult, type SyncState } from "../quote/components/use-saver";
 import { startQuoteGeneration } from "../quote/generate.server";
 import { listPriceItems } from "../quote/price-sheet.server";
+import { sendChecks, type SendCheck } from "../quote/send-check";
 import {
   deleteQuote,
   existingQuoteIds,
@@ -412,6 +413,19 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
   const fileSync: SyncState = syncs.includes("saving") ? "saving" : syncs.includes("failed") ? "failed" : "saved";
   const unsaved = fileSync !== "saved";
   const linesRef = useRef<LinesHandle>(null);
+  // What is on screen now, so the check follows her edits before they are saved.
+  const [liveEvent, setLiveEvent] = useState(event);
+  const [liveLines, setLiveLines] = useState(lines);
+  const checks = useMemo(
+    () =>
+      sendChecks({
+        event: liveEvent,
+        lines: liveLines,
+        emailSubject: version.emailSubject ?? "",
+        emailBody: version.emailBody ?? "",
+      }),
+    [liveEvent, liveLines, version.emailSubject, version.emailBody],
+  );
 
   return (
     <>
@@ -436,6 +450,7 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
           readOnly={readOnly}
           onUnsavedChange={setEventSync}
           onHeadcountChange={(from, to) => linesRef.current?.followHeadcount(from, to)}
+          onEventChange={setLiveEvent}
         />
       </Section>
 
@@ -451,6 +466,7 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
           itemKinds={loaded.itemKinds}
           readOnly={readOnly}
           onUnsavedChange={setLinesSync}
+          onLinesChange={setLiveLines}
         />
         {vatFetcher.state === "idle" && vatFetcher.data?.error && <ErrorLine>{vatFetcher.data.error}</ErrorLine>}
       </Section>
@@ -474,6 +490,12 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
           }
         />
       </Section>
+
+      {!readOnly && (
+        <Section title="보내기 전 확인">
+          <SendCheckList checks={checks} />
+        </Section>
+      )}
 
       <div className="flex flex-col gap-3">
         <Button asChild variant="outline" size="lg" className="h-12">
@@ -499,6 +521,40 @@ function ReadyBody({ loaded, lines, event }: { loaded: Loaded; lines: NonNullabl
 
       <DeleteQuote quoteId={quote.id} />
     </>
+  );
+}
+
+function SendCheckList({ checks }: { checks: SendCheck[] }) {
+  if (checks.length === 0) {
+    return (
+      <p role="status" className="flex items-center gap-2 text-sm text-emerald-700">
+        <CheckIcon className="size-4 shrink-0" aria-hidden="true" />
+        더 확인할 게 없어요.
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <ul className="flex flex-col gap-2" aria-live="polite">
+        {checks.map((c) => (
+          <li
+            key={c.text}
+            className={cn(
+              "flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm break-keep",
+              c.kind === "warn" ? "border-amber-300 bg-amber-50 text-amber-950" : "bg-card text-foreground",
+            )}
+          >
+            {c.kind === "warn" ? (
+              <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600" aria-label="주의" />
+            ) : (
+              <CircleDotIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-label="할 일" />
+            )}
+            <span className="flex-1">{c.text}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-muted-foreground">화면에 있는 내용으로 다시 봐요. 엑셀 받기와 복사는 그대로 할 수 있어요.</p>
+    </div>
   );
 }
 
