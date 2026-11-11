@@ -135,6 +135,31 @@ describe("submitInquiry", () => {
     expect(bad).toEqual({ ok: false, code: "INVALID" });
   });
 
+  it("stores mood, audience and menu wish and passes them to the quote input as event lines", async () => {
+    const { deps } = makeDeps();
+    await submitInquiry(
+      deps,
+      raw({ mood: "격식 있게", audience: "40~50대, 남성이 많아요", menuWish: "샌드위치와 따뜻한 커피" }),
+      META,
+      NOW,
+    );
+    const [row] = await allInquiries();
+    expect([row.mood, row.audience, row.menuWish]).toEqual(["격식 있게", "40~50대, 남성이 많아요", "샌드위치와 따뜻한 커피"]);
+    const [v] = await db.select().from(quoteVersions);
+    expect(v.inputText).toContain("행사 분위기: 격식 있게");
+    expect(v.inputText).toContain("참석자 연령대·성비: 40~50대, 남성이 많아요");
+    expect(v.inputText).toContain("원하는 메뉴 구성: 샌드위치와 따뜻한 커피");
+  });
+
+  it("a sender without the q15 fields stores them empty; an unknown mood is refused", async () => {
+    const { deps } = makeDeps();
+    expect((await submitInquiry(deps, raw(), META, NOW)).ok).toBe(true);
+    const [row] = await allInquiries();
+    expect([row.mood, row.audience, row.menuWish]).toEqual(["", "", ""]);
+    const bad = await submitInquiry(deps, raw({ clientToken: "token-2", mood: "캐주얼" }), META, NOW);
+    expect(bad).toEqual({ ok: false, code: "INVALID" });
+  });
+
   it("quote input text has no phone, email or name", async () => {
     const { deps } = makeDeps();
     await submitInquiry(deps, raw(), META, NOW);

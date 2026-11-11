@@ -359,6 +359,12 @@ export const inquiries = sqliteTable(
     eventType: text("event_type").notNull(),
     /** JSON array of strings. */
     menusJson: text("menus_json").notNull(),
+    /** 격식 있게 | 트렌디하게 | 상관없어요 | "" (not given). Added after launch (owner's answer q15). */
+    mood: text("mood").notNull().default(""),
+    /** Guests' ages and gender mix, free text; "" = not given. */
+    audience: text("audience").notNull().default(""),
+    /** A menu the customer already has in mind, free text; "" = not given. */
+    menuWish: text("menu_wish").notNull().default(""),
     budget: text("budget").notNull(),
     requests: text("requests").notNull(),
     referral: text("referral").notNull(),
