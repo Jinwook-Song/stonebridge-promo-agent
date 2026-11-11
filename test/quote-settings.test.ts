@@ -6,7 +6,7 @@ import { getQuoteSettings, saveQuoteSettings, type QuoteSettings } from "../app/
 import { getDb } from "../app/server/db";
 
 const db = getDb(env.DB);
-const KEYS = ["quote_sender", "quote_intro", "quote_fixed_lines", "owner_password_hash"];
+const KEYS = ["quote_sender", "quote_intro", "quote_fixed_lines", "quote_mail_example", "owner_password_hash"];
 
 beforeEach(async () => {
   await db.delete(settings).where(inArray(settings.key, KEYS));
@@ -24,6 +24,7 @@ const sample: QuoteSettings = {
   },
   intro: "안녕하세요.\n견적서를 보내드립니다.",
   fixedLines: "세팅 포함\n일회용품 제공",
+  mailExample: "안녕하세요.\n견적서를 첨부해 드립니다.\n감사합니다!",
 };
 
 describe("quote settings", () => {
@@ -33,6 +34,7 @@ describe("quote settings", () => {
     expect(s.sender).toEqual({ company: "스톤테이블", person: "", phone: "", email: "", payment: "", onsite: "", bizNo: "" });
     expect(s.intro).toBe("");
     expect(s.fixedLines).toBe("");
+    expect(s.mailExample).toBe("");
   });
 
   it("round-trips a save", async () => {

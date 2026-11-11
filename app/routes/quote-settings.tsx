@@ -97,6 +97,7 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
           },
           intro: str("intro"),
           fixedLines: str("fixedLines"),
+          mailExample: str("mailExample"),
         });
         return { ok: true, savedAt: Date.now() };
       default:
@@ -192,6 +193,13 @@ export default function QuoteSettings({ loaderData, actionData }: Route.Componen
         </Field>
         <Field label="기본 제공 사항" htmlFor="fixedLines" hint="모든 견적에 들어가요. 한 줄에 하나씩 적어 주세요.">
           <Textarea id="fixedLines" name="fixedLines" defaultValue={quote.fixedLines} rows={5} />
+        </Field>
+        <Field
+          label="회신 메일 말투 예시"
+          htmlFor="mailExample"
+          hint="손님께 보냈던 메일 하나를 붙여 넣어 주세요. 회신 메일 초안이 이 말투(인사, 맺음말)를 따라요. 내용은 옮기지 않아요."
+        >
+          <Textarea id="mailExample" name="mailExample" defaultValue={quote.mailExample} rows={8} />
         </Field>
         <Message result={actionData} success="저장했어요." />
         <Button type="submit" size="lg" className="h-12" disabled={saving}>

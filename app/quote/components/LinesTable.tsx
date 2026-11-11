@@ -1,5 +1,5 @@
 import { CircleAlertIcon, LightbulbIcon, PlusIcon, Trash2Icon, UsersIcon } from "lucide-react";
-import { useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { Button } from "../../components/ui/button";
 import { Input, inputClass } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
@@ -73,6 +73,7 @@ export function LinesTable({
   itemKinds,
   readOnly,
   onUnsavedChange,
+  onLinesChange,
   ref,
 }: {
   quoteId: number;
@@ -85,6 +86,8 @@ export function LinesTable({
   readOnly: boolean;
   /** While the lines on screen are not what the server holds ("saving", or "failed" until retried) a download would be stale. */
   onUnsavedChange?: (state: SyncState) => void;
+  /** The lines as they are on screen, on every change (for the 보내기 전 확인 box). */
+  onLinesChange?: (lines: QuoteLine[]) => void;
   ref?: Ref<LinesHandle>;
 }) {
   const nextKey = useRef(initialLines.length);
@@ -94,6 +97,11 @@ export function LinesTable({
   useReportSync(saver, onUnsavedChange);
   const lines = rows.map((r) => r.line);
   const totals = computeTotals(lines, vatIncluded);
+  const linesReport = useRef(onLinesChange);
+  linesReport.current = onLinesChange;
+  useEffect(() => {
+    linesReport.current?.(rows.map((r) => r.line));
+  }, [rows]);
 
   const [followed, setFollowed] = useState<Followed | null>(null);
 

@@ -9,12 +9,15 @@ export type QuoteSettings = {
   intro: string;
   /** What every quote includes, one per line. */
   fixedLines: string;
+  /** One of her own past reply mails: the model follows its tone only (greeting, closing, register). */
+  mailExample: string;
 };
 
 // Outside the promo KEYS map on purpose; never touches the password hash row.
 const SENDER_KEY = "quote_sender";
 const INTRO_KEY = "quote_intro";
 const FIXED_KEY = "quote_fixed_lines";
+const MAIL_EXAMPLE_KEY = "quote_mail_example";
 
 const DEFAULT_SENDER: Sender = {
   company: "스톤테이블",
@@ -45,12 +48,13 @@ export async function getQuoteSettings(db: Db): Promise<QuoteSettings> {
   const rows = await db
     .select()
     .from(settings)
-    .where(inArray(settings.key, [SENDER_KEY, INTRO_KEY, FIXED_KEY]));
+    .where(inArray(settings.key, [SENDER_KEY, INTRO_KEY, FIXED_KEY, MAIL_EXAMPLE_KEY]));
   const byKey = new Map(rows.map((r) => [r.key, r.value]));
   return {
     sender: parseSender(byKey.get(SENDER_KEY)),
     intro: byKey.get(INTRO_KEY) ?? "",
     fixedLines: byKey.get(FIXED_KEY) ?? "",
+    mailExample: byKey.get(MAIL_EXAMPLE_KEY) ?? "",
   };
 }
 
@@ -73,5 +77,6 @@ export async function saveQuoteSettings(db: Db, s: QuoteSettings): Promise<void>
     upsert(SENDER_KEY, JSON.stringify(sender)),
     upsert(INTRO_KEY, clean(s.intro)),
     upsert(FIXED_KEY, clean(s.fixedLines)),
+    upsert(MAIL_EXAMPLE_KEY, clean(s.mailExample)),
   ]);
 }
