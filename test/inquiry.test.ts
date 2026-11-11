@@ -30,7 +30,7 @@ function raw(over: Record<string, unknown> = {}) {
     venue: "예시 강당",
     headcount: 40,
     eventType: "학교·학원",
-    menus: ["핑거푸드", "음료"],
+    menus: ["샌드위치와 간식", "음료"],
     budget: "",
     requests: "알레르기 확인 부탁드려요",
     referral: "블로그",
@@ -96,7 +96,7 @@ describe("submitInquiry", () => {
       consentAt: NOW.toISOString(),
       createdAt: NOW.toISOString(),
     });
-    expect(JSON.parse(row.menusJson)).toEqual(["핑거푸드", "음료"]);
+    expect(JSON.parse(row.menusJson)).toEqual(["샌드위치와 간식", "음료"]);
 
     const qs = await db.select().from(quotes);
     expect(qs).toHaveLength(1);

@@ -1,4 +1,3 @@
-// stonetable-site/app/inquiry/schema.ts 사본 — 같이 고칠 것
 // Shared inquiry validation. Self-contained on purpose (only `zod`): the promo app copies this
 // file as-is and calls `InquiryInputSchema.safeParse(raw)` at its trust boundary.
 import { z } from "zod";
@@ -11,20 +10,21 @@ export const EVENT_TYPES = [
   "답례품·선물",
   "기타",
 ] as const;
+// Same names as the menu page sections (test/content.test.ts keeps them in step).
 export const MENU_INTERESTS = [
-  "케이터링 테이블",
-  "핑거푸드",
+  "출장 다과 테이블",
+  "샌드위치와 간식",
   "디저트 테이블",
-  "답례품 세트",
+  "답례품과 선물 세트",
   "음료",
 ] as const;
 export const REFERRALS = ["네이버 검색", "블로그", "인스타", "지인 소개", "기타"] as const;
 
 export const CONSENT_ERROR = "개인정보 수집·이용에 동의해 주세요";
 
-const DATE_ERROR = "행사 날짜를 골라 주세요. 아직 모르면 ‘미정’을 체크해 주세요";
+const DATE_ERROR = "행사 날짜를 골라 주세요. 아직 모르면 ‘미정’을 눌러 주세요";
 const PAST_DATE_ERROR = "지난 날짜는 고를 수 없어요";
-const HEADCOUNT_ERROR = "인원은 1명부터 3000명까지 숫자로 적어 주세요. 아직 모르면 ‘미정’을 체크해 주세요";
+const HEADCOUNT_ERROR = "인원은 1명부터 3000명까지 숫자로 적어 주세요. 아직 모르면 ‘미정’을 눌러 주세요";
 const PHONE_ERROR = "연락처를 숫자로 다시 확인해 주세요 (예: 010-1234-5678)";
 const TIME_RE = /^(([01]\d|2[0-3]):[0-5]\d)?$/;
 const END_TIME_ERROR = "끝나는 시간을 다시 확인해 주세요";

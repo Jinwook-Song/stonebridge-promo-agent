@@ -129,7 +129,7 @@ async function inquiryQuote(): Promise<number> {
       venue: "예시 강당",
       headcount: 40,
       eventType: "학교·학원",
-      menus: ["핑거푸드"],
+      menus: ["샌드위치와 간식"],
       budget: "",
       requests: "",
       referral: "",
