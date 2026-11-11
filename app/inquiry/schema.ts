@@ -12,12 +12,16 @@ export const EVENT_TYPES = [
 ] as const;
 // Same names as the menu page sections (test/content.test.ts keeps them in step).
 export const MENU_INTERESTS = [
-  "출장 다과 테이블",
+  "출장 다과 세팅",
   "샌드위치와 간식",
   "디저트 테이블",
-  "답례품과 선물 세트",
+  "박스케이터링",
   "음료",
 ] as const;
+// Owner's answer q15 (2026-11-10): the event's mood, the guests' ages and gender mix, and a menu the
+// customer already has in mind shape the quote. All optional with a "" default, so a sender that
+// predates them still validates.
+export const MOODS = ["격식 있게", "트렌디하게", "상관없어요"] as const;
 export const REFERRALS = ["네이버 검색", "블로그", "인스타", "지인 소개", "기타"] as const;
 
 export const CONSENT_ERROR = "개인정보 수집·이용에 동의해 주세요";
@@ -103,6 +107,9 @@ export function inquiryInputSchema(now?: Date) {
       .nullable(),
     eventType: z.enum(EVENT_TYPES, { error: "행사 성격을 골라 주세요" }),
     menus: z.array(z.enum(MENU_INTERESTS), { error: "관심 메뉴를 다시 골라 주세요" }),
+    mood: z.union([z.enum(MOODS), z.literal("")], { error: "행사 분위기를 다시 골라 주세요" }).default(""),
+    audience: text(60, "연령대와 성비는 60자 안으로 적어 주세요").default(""),
+    menuWish: text(500, "원하는 메뉴 구성은 500자 안으로 적어 주세요").default(""),
     budget: text(60, "예산은 60자 안으로 적어 주세요"),
     requests: text(2000, "요청 사항은 2000자 안으로 적어 주세요"),
     referral: z.union([z.enum(REFERRALS), z.literal("")], { error: "알게 된 경로를 다시 골라 주세요" }),
@@ -173,6 +180,9 @@ export function parseInquiryForm(raw: Raw, now: Date = new Date()): InquiryParse
         : headcountText,
     eventType: str(raw, "eventType"),
     menus: getAll(raw, "menus").filter((m): m is string => typeof m === "string" && m !== ""),
+    mood: str(raw, "mood"),
+    audience: str(raw, "audience"),
+    menuWish: str(raw, "menuWish"),
     budget: str(raw, "budget"),
     requests: str(raw, "requests"),
     referral: str(raw, "referral"),
@@ -204,7 +214,10 @@ export function inquiryToQuoteText(v: InquiryInput): string {
     ["장소", v.venue],
     ["인원", v.headcount === null ? "미정" : `${v.headcount}명`],
     ["행사 성격", v.eventType],
+    ["행사 분위기", v.mood],
+    ["참석자 연령대·성비", v.audience],
     ["관심 메뉴", v.menus.join(", ")],
+    ["원하는 메뉴 구성", v.menuWish],
     ["예산", v.budget],
     ["요청 사항", v.requests],
   ];

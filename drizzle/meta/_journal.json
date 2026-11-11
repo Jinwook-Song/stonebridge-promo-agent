@@ -64,6 +64,13 @@
       "when": 1794315031223,
       "tag": "0008_inquiry_end_time",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1794362204367,
+      "tag": "0009_inquiry_owner_fields",
+      "breakpoints": true
     }
   ]
 }
