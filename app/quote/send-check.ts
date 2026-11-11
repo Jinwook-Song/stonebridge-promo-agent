@@ -18,10 +18,27 @@ export type SendCheckInput = {
 };
 
 /** The owner does not want the catering tied to the cafe in anything a customer receives (q12). */
-const CAFE_NAME = /스톤\s*브릿지|stone\s*[-_]?\s*bridge/i;
-/** "120,000원", "12만 원", "3만원". A bare number with 원 is a price in a mail. */
-const AMOUNT = /\d[\d,]*\s*(?:만\s*)?원/;
-const HEADCOUNT = /(\d+)\s*(?:명|분)/g;
+const CAFE_NAME = /스톤\s*브[릿리]지|stone\s*[-_]?\s*bridge/i;
+const ZERO_WIDTH = /[\u200B-\u200D\uFEFF]/g;
+/**
+ * A price in a mail: "120,000원", "12만 원", "36만 5천원", "3천원", "₩120,000", "십만 원".
+ * 원 alone is not enough ("원하시는").
+ */
+const AMOUNT = /₩\s*\d|\d[\d,.]*\s*(?:[십백천만억]\s*)*원|(?:[일이삼사오육칠팔구]?[십백천만억])+\s*원/;
+/** "40명", "1,200명", "40~50명" (both ends). 분 is left out: it is also minutes. */
+const HEADCOUNT = /(\d[\d,]*)(?:\s*[~\-–]\s*(\d[\d,]*))?\s*명/g;
+/** A date followed by these is a deadline in the mail, not the event day. */
+const DEADLINE_AFTER = /^\s*(?:까지|이전|전까지|내로|안으로|이내)/;
+
+function hasCafeName(text: string): boolean {
+  return CAFE_NAME.test(text.replace(ZERO_WIDTH, ""));
+}
+
+function headcountsIn(text: string): number[] {
+  const toNumber = (s: string) => Number(s.replace(/,/g, ""));
+  const found = [...text.matchAll(HEADCOUNT)].flatMap((m) => (m[2] === undefined ? [m[1]] : [m[1], m[2]]));
+  return [...new Set(found.map(toNumber))];
+}
 
 const LIST_MAX = 3;
 
@@ -30,18 +47,31 @@ function listed(names: string[]): string {
   return names.length > LIST_MAX ? `${shown.join(", ")} 외 ${names.length - LIST_MAX}개` : shown.join(", ");
 }
 
-/** Month and day found in free text: "11월 20일", "2026-11-20", "2026.11.20", "11/20". */
-export function datesIn(text: string): string[] {
+/**
+ * Month and day found in free text: "11월 20일", "12월 1일~2일" (both days), "2026-11-20",
+ * "2026.11.20". `slash` also reads "11/20": on for the event date box, off for mails, where
+ * "1/2" is more often a fraction. `skipDeadlines` drops dates followed by 까지 and the like.
+ */
+export function datesIn(text: string, opts: { slash?: boolean; skipDeadlines?: boolean } = {}): string[] {
   const found: string[] = [];
   const add = (m: string, d: string) => {
     const month = Number(m);
     const day = Number(d);
     if (month >= 1 && month <= 12 && day >= 1 && day <= 31) found.push(`${month}월 ${day}일`);
   };
-  for (const m of text.matchAll(/(\d{1,2})\s*월\s*(\d{1,2})\s*일/g)) add(m[1], m[2]);
-  for (const m of text.matchAll(/\d{4}\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})/g)) add(m[1], m[2]);
-  // "11/20" without a year; skip the tail of a full date already read above.
-  for (const m of text.matchAll(/(?<![\d./-])(\d{1,2})\/(\d{1,2})(?![\d/])/g)) add(m[1], m[2]);
+  const deadline = (end: number) => opts.skipDeadlines === true && DEADLINE_AFTER.test(text.slice(end));
+  for (const m of text.matchAll(/(\d{1,2})\s*월\s*(\d{1,2})\s*일(?:\s*[~\-–]\s*(\d{1,2})\s*일)?/g)) {
+    if (deadline(m.index + m[0].length)) continue;
+    add(m[1], m[2]);
+    if (m[3] !== undefined) add(m[1], m[3]);
+  }
+  for (const m of text.matchAll(/\d{4}\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})/g)) {
+    if (!deadline(m.index + m[0].length)) add(m[1], m[2]);
+  }
+  if (opts.slash === true) {
+    // "11/20" without a year; skip the tail of a full date already read above.
+    for (const m of text.matchAll(/(?<![\d./-])(\d{1,2})\/(\d{1,2})(?![\d/])/g)) add(m[1], m[2]);
+  }
   return [...new Set(found)];
 }
 
@@ -55,7 +85,7 @@ function mailChecks(input: SendCheckInput): SendCheck[] {
   }
 
   if (event.headcount !== null && event.headcount > 0) {
-    const counts = [...new Set([...emailBody.matchAll(HEADCOUNT)].map((m) => Number(m[1])))];
+    const counts = headcountsIn(emailBody);
     const other = counts.filter((n) => n !== event.headcount);
     if (other.length > 0 && !counts.includes(event.headcount)) {
       checks.push({
@@ -65,9 +95,9 @@ function mailChecks(input: SendCheckInput): SendCheck[] {
     }
   }
 
-  const eventDays = datesIn(event.eventDate);
+  const eventDays = datesIn(event.eventDate, { slash: true });
   if (eventDays.length > 0) {
-    const mailDays = datesIn(emailBody);
+    const mailDays = datesIn(emailBody, { skipDeadlines: true });
     if (mailDays.length > 0 && !mailDays.some((d) => eventDays.includes(d))) {
       checks.push({
         kind: "warn",
@@ -80,9 +110,11 @@ function mailChecks(input: SendCheckInput): SendCheck[] {
 
 function cafeNameCheck(input: SendCheckInput): SendCheck[] {
   const places: string[] = [];
-  if (CAFE_NAME.test(input.emailSubject) || CAFE_NAME.test(input.emailBody)) places.push("회신 메일");
-  const lines = input.lines.filter((l) => [l.label, l.content, l.menu, l.note].some((t) => CAFE_NAME.test(t)));
+  if (hasCafeName(input.emailSubject) || hasCafeName(input.emailBody)) places.push("회신 메일");
+  const lines = input.lines.filter((l) => [l.label, l.content, l.menu, l.note].some(hasCafeName));
   if (lines.length > 0) places.push(`견적 줄 ${listed(lines.map((l) => l.label))}`);
+  // 요청 사항 goes on the Excel as 특이사항.
+  if (hasCafeName(input.event.requests)) places.push("요청 사항");
   if (places.length === 0) return [];
   return [{ kind: "warn", text: `'스톤브릿지' 이름이 들어 있어요 (${places.join(", ")}). 손님께 가는 글에서는 빼 주세요.` }];
 }

@@ -44,6 +44,15 @@ describe("quote settings", () => {
     expect((await getQuoteSettings(db)).intro).toBe("바뀜");
   });
 
+  it("refuses a mail example over 2,000 characters and keeps the stored one", async () => {
+    await saveQuoteSettings(db, sample);
+    const err = await saveQuoteSettings(db, { ...sample, mailExample: "가".repeat(2001) }).catch((e) => e);
+    expect(err).toMatchObject({ code: "INVALID_INPUT" });
+    expect((await getQuoteSettings(db)).mailExample).toBe(sample.mailExample);
+    await saveQuoteSettings(db, { ...sample, mailExample: "가".repeat(2000) });
+    expect((await getQuoteSettings(db)).mailExample).toHaveLength(2000);
+  });
+
   it("normalizes CRLF and trims", async () => {
     await saveQuoteSettings(db, { ...sample, intro: "  a\r\nb  ", fixedLines: "x\r\ny\r\n" });
     const s = await getQuoteSettings(db);

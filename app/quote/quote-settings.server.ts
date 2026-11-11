@@ -1,6 +1,7 @@
 import { inArray, sql } from "drizzle-orm";
 import { settings } from "../../database/schema";
 import type { Db } from "../server/db";
+import { DomainError } from "../server/errors";
 import { SenderSchema, type Sender } from "./types";
 
 export type QuoteSettings = {
@@ -28,6 +29,9 @@ const DEFAULT_SENDER: Sender = {
   onsite: "",
   bizNo: "",
 };
+
+/** One mail is enough for tone; it goes into every quote prompt. */
+export const MAX_MAIL_EXAMPLE_CHARS = 2000;
 
 /** Browsers send textarea newlines as CRLF. */
 function clean(text: string): string {
@@ -59,6 +63,10 @@ export async function getQuoteSettings(db: Db): Promise<QuoteSettings> {
 }
 
 export async function saveQuoteSettings(db: Db, s: QuoteSettings): Promise<void> {
+  const mailExample = clean(s.mailExample);
+  if (mailExample.length > MAX_MAIL_EXAMPLE_CHARS) {
+    throw new DomainError("INVALID_INPUT", `회신 메일 말투 예시는 ${MAX_MAIL_EXAMPLE_CHARS.toLocaleString("ko-KR")}자까지 적을 수 있어요.`);
+  }
   const sender: Sender = {
     company: clean(s.sender.company),
     person: clean(s.sender.person),
@@ -77,6 +85,6 @@ export async function saveQuoteSettings(db: Db, s: QuoteSettings): Promise<void>
     upsert(SENDER_KEY, JSON.stringify(sender)),
     upsert(INTRO_KEY, clean(s.intro)),
     upsert(FIXED_KEY, clean(s.fixedLines)),
-    upsert(MAIL_EXAMPLE_KEY, clean(s.mailExample)),
+    upsert(MAIL_EXAMPLE_KEY, mailExample),
   ]);
 }

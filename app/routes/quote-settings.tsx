@@ -197,7 +197,7 @@ export default function QuoteSettings({ loaderData, actionData }: Route.Componen
         <Field
           label="회신 메일 말투 예시"
           htmlFor="mailExample"
-          hint="손님께 보냈던 메일 하나를 붙여 넣어 주세요. 회신 메일 초안이 이 말투(인사, 맺음말)를 따라요. 내용은 옮기지 않아요."
+          hint="손님께 보냈던 메일 하나를 붙여 넣어 주세요. 손님 이름·연락처·금액은 지워 주세요. 회신 메일 초안이 이 말투(인사, 맺음말)를 따라요."
         >
           <Textarea id="mailExample" name="mailExample" defaultValue={quote.mailExample} rows={8} />
         </Field>

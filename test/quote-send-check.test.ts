@@ -61,7 +61,7 @@ describe("sendChecks", () => {
   });
 
   it("flags an amount in the mail", () => {
-    for (const body of ["총 360,000원입니다.", "1인 9000원", "약 36만 원"]) {
+    for (const body of ["총 360,000원입니다.", "1인 9000원", "약 36만 원", "36만 5천원", "3천원", "₩120,000", "십만 원"]) {
       expect(sendChecks({ ...ok, emailBody: body }).map((c) => c.text)).toContain(
         "회신 메일에 금액이 적혀 있어요. 금액은 견적서로만 안내해요.",
       );
@@ -103,14 +103,48 @@ describe("sendChecks", () => {
     expect(sendChecks({ ...ok, lines }).map((c) => c.text)).toContain("단가를 적을 줄 5개: 가, 나, 다 외 2개");
   });
 
+  it("reads headcounts with thousands separators and ranges, and not minutes", () => {
+    const big = { ...event, headcount: 1200 };
+    expect(sendChecks({ ...ok, event: big, emailBody: "안녕하세요. 1,200명 행사 견적입니다. 12월 1일" })).toEqual([]);
+    expect(sendChecks({ ...ok, emailBody: "안녕하세요. 30~40명 행사, 시작 30분 전 도착해요. 12월 1일" })).toEqual([]);
+    expect(sendChecks({ ...ok, emailBody: "시작 30분 전에 도착해 세팅해요. 12월 1일" })).toEqual([]);
+  });
+
+  it("a reply deadline in the mail is not read as the event date", () => {
+    const body = "안녕하세요. 40명 행사 견적입니다. 11월 25일까지 확정 부탁드려요.";
+    expect(sendChecks({ ...ok, emailBody: body })).toEqual([]);
+  });
+
+  it("a fraction in the mail is not a date", () => {
+    expect(sendChecks({ ...ok, emailBody: "40명 행사, 테이블 1/2 크기로 준비해요." })).toEqual([]);
+  });
+
+  it("catches the cafe's name misspelled, split by zero-width spaces, or in 요청 사항", () => {
+    expect(sendChecks({ ...ok, emailBody: ok.emailBody + " 스톤브리지" })[0].kind).toBe("warn");
+    expect(sendChecks({ ...ok, emailBody: ok.emailBody + " 스톤\u200B브릿지" })[0].kind).toBe("warn");
+    expect(sendChecks({ ...ok, event: { ...event, requests: "스톤브릿지 마카롱으로" } })[0].text).toBe(
+      "'스톤브릿지' 이름이 들어 있어요 (요청 사항). 손님께 가는 글에서는 빼 주세요.",
+    );
+  });
+
+  it("원 alone is not an amount", () => {
+    expect(sendChecks({ ...ok, emailBody: ok.emailBody + "\n원하시는 메뉴가 있으면 알려 주세요." })).toEqual([]);
+  });
+
   it("an empty mail skips the mail checks", () => {
     expect(sendChecks({ ...ok, event: { ...event, headcount: 99 }, emailBody: "", emailSubject: "" })).toEqual([]);
   });
 });
 
 describe("datesIn", () => {
-  it("reads Korean, dashed, dotted and slashed dates as month and day", () => {
-    expect(datesIn("12월 1일, 2026-12-02, 2026.12.3, 12/4")).toEqual(["12월 1일", "12월 2일", "12월 3일", "12월 4일"]);
+  it("reads Korean, dashed and dotted dates as month and day; slashes only when asked", () => {
+    expect(datesIn("12월 1일, 2026-12-02, 2026.12.3, 12/4")).toEqual(["12월 1일", "12월 2일", "12월 3일"]);
+    expect(datesIn("12/4", { slash: true })).toEqual(["12월 4일"]);
+  });
+
+  it("reads both days of a range and can skip deadlines", () => {
+    expect(datesIn("12월 1일~2일")).toEqual(["12월 1일", "12월 2일"]);
+    expect(datesIn("11월 30일까지 알려 주세요. 12월 1일 행사", { skipDeadlines: true })).toEqual(["12월 1일"]);
   });
 
   it("ignores impossible dates and plain numbers", () => {

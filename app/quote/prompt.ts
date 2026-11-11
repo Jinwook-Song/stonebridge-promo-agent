@@ -253,7 +253,8 @@ export function buildQuoteUser(input: QuoteUserInput): Anthropic.ContentBlockPar
     { type: "text", text: `## 손님 문의 글\n${fenced("문의글", input.text)}` },
   ];
   if (input.contactOnFile) blocks.push({ type: "text", text: CONTACT_ON_FILE_NOTICE });
-  const mailExample = input.mailExample?.trim() ?? "";
+  // Capped again here: a row written before the save-time cap still cannot flood the prompt.
+  const mailExample = (input.mailExample ?? "").trim().slice(0, 2000);
   if (mailExample !== "") {
     blocks.push({
       type: "text",
