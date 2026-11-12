@@ -377,3 +377,18 @@ export const inquiries = sqliteTable(
     index("inquiries_quote_idx").on(t.quoteId),
   ],
 );
+
+/**
+ * Public demo only (env DEMO = "1"): one row per AI call a visitor started, for the call cap
+ * (app/demo/quota.server.ts). Never written in the owner's app. Kept across the daily reset.
+ */
+export const demoCalls = sqliteTable(
+  "demo_calls",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    /** post | quote | photo_pick */
+    kind: text("kind").notNull(),
+    at: text("at").notNull(),
+  },
+  (t) => [index("demo_calls_at_idx").on(t.at)],
+);

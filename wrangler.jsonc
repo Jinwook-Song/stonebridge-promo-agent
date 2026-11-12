@@ -25,7 +25,9 @@
 		// are 308-redirected here (app/server/canonical-host.ts).
 		"PUBLIC_ORIGIN": "https://stonebridge-promo.pages.dev",
 		// "1" = canned drafts instead of calling Claude. Local dev only.
-		"FAKE_CLAUDE": "0"
+		"FAKE_CLAUDE": "0",
+		// "1" = the public demo (env.demo below): no login, AI call cap, daily reset. Off here.
+		"DEMO": "0"
 	},
 	// set via `wrangler secret put` (prod) / .dev.vars (local)
 	"secrets": {
@@ -70,5 +72,60 @@
 			"binding": "WATCH",
 			"class_name": "WatchWorkflow"
 		}
-	]
+	],
+	// Public demo for the AX challenge review: a separate Worker (stonebridge-promo-demo) with its
+	// own D1, R2 and Workflows, fictional data only, no Kakao secrets. Build with
+	// `CLOUDFLARE_ENV=demo` (the Vite plugin picks the env at build time): `npm run deploy:demo`.
+	// Bindings and vars are not inherited, so every one is restated here and must never point at
+	// the owner's resources. Workflow names are unique per account, hence the -demo suffix.
+	"env": {
+		"demo": {
+			"name": "stonebridge-promo-demo",
+			"vars": {
+				// The demo's own pages.dev front (edge-demo/), Seoul edge like the owner's app.
+				"PUBLIC_ORIGIN": "https://stonebridge-promo-demo.pages.dev",
+				"FAKE_CLAUDE": "0",
+				"DEMO": "1"
+			},
+			"secrets": {
+				"required": ["ANTHROPIC_API_KEY", "SESSION_SECRET", "OWNER_INITIAL_PASSWORD", "IMAGE_URL_SECRET"]
+			},
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "promo-demo",
+					"database_id": "a524742f-7300-45a1-be13-68d8d9f643c6",
+					"migrations_dir": "drizzle"
+				}
+			],
+			"r2_buckets": [
+				{
+					"binding": "PHOTOS",
+					"bucket_name": "promo-demo-photos"
+				}
+			],
+			// 19:00 UTC = 04:00 KST: put the demo back to its sample data (app/demo/reset.server.ts).
+			// No Kakao alerts, no competitor watch.
+			"triggers": {
+				"crons": ["0 19 * * *"]
+			},
+			"workflows": [
+				{
+					"name": "generate-post-demo",
+					"binding": "GENERATE",
+					"class_name": "GeneratePostWorkflow"
+				},
+				{
+					"name": "quote-generate-demo",
+					"binding": "QUOTE_GENERATE",
+					"class_name": "QuoteGenerateWorkflow"
+				},
+				{
+					"name": "watch-demo",
+					"binding": "WATCH",
+					"class_name": "WatchWorkflow"
+				}
+			]
+		}
+	}
 }

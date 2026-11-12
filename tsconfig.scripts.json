@@ -20,7 +20,9 @@
     "app/promo/settings.server.ts",
     "app/server/db.ts",
     "app/server/errors.ts",
-    "database/schema.ts"
+    "database/schema.ts",
+    "app/demo/seed-sql.ts",
+    "demo/**/*"
   ],
   "compilerOptions": {
     "composite": true,

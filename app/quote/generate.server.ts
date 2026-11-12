@@ -1,5 +1,6 @@
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { quotes, quoteVersions } from "../../database/schema";
+import { DEMO_LIMIT_MESSAGE, isDemo, takeDemoCall } from "../demo/quota.server";
 import {
   GenerationError,
   makeClaudeCalls,
@@ -299,7 +300,7 @@ export async function runQuoteGeneration(deps: QuoteGenDeps, run: QuoteRunRef, o
  * cannot be created the version is marked failed with a Korean reason instead of throwing.
  */
 export async function startQuoteGeneration(
-  env: Pick<Env, "QUOTE_GENERATE">,
+  env: Pick<Env, "QUOTE_GENERATE"> & { DEMO?: string },
   db: Db,
   quoteId: number,
   version: number,
@@ -339,6 +340,12 @@ export async function startQuoteGeneration(
     if (!row) throw new DomainError("NOT_FOUND", "견적을 찾을 수 없어요.");
     if (row.status === "generating") throw new DomainError("BUSY", "이미 만드는 중이에요.");
     throw new DomainError("INVALID_STATE", "이 버전은 다시 만들 수 없어요.");
+  }
+
+  // Public demo: over the AI call cap, the version shows why (다시 시도 later) instead of a run.
+  if (isDemo(env) && !(await takeDemoCall(db, "quote", now))) {
+    await markFailed(db, run, DEMO_LIMIT_MESSAGE);
+    return;
   }
 
   const params: QuoteGenParams = { quoteId, version };

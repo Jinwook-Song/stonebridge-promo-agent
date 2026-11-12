@@ -8,6 +8,7 @@ import { Card } from "../components/ui/card";
 import { Input, inputClass } from "../components/ui/input";
 import { Field } from "../components/ui/label";
 import { cn } from "../lib/utils";
+import { isDemo } from "../demo/quota.server";
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
 import {
@@ -111,6 +112,8 @@ export async function action({ request }: Route.ActionArgs): Promise<NonNullable
         await deleteWatchSource(db, wholeNumber(str("id")));
         return { ok: true };
       case "runNow": {
+        // It reads real competitor sites and makes up to 30 Claude calls: never from the demo.
+        if (isDemo(env)) return { error: "데모에서는 감시를 직접 돌릴 수 없어요. 보이는 소식과 가격은 예시예요." };
         const now = new Date();
         try {
           const started = await startManualWatchRun(env.WATCH, now);
