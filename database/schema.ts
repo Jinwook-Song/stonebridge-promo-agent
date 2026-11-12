@@ -386,7 +386,7 @@ export const demoCalls = sqliteTable(
   "demo_calls",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    /** post | quote | photo_pick */
+    /** post | quote | photo_pick | topic_check */
     kind: text("kind").notNull(),
     at: text("at").notNull(),
   },

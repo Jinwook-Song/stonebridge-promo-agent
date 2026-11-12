@@ -11,7 +11,7 @@ export function isDemo(env: { DEMO?: string }): boolean {
   return env.DEMO === "1";
 }
 
-export type DemoCallKind = "post" | "quote" | "photo_pick";
+export type DemoCallKind = "post" | "quote" | "photo_pick" | "topic_check";
 
 export { DEMO_DAILY_LIMIT, DEMO_HOURLY_LIMIT };
 

@@ -21,6 +21,7 @@
     "app/server/db.ts",
     "app/server/errors.ts",
     "database/schema.ts",
+    "app/demo/topic-check.ts",
     "app/demo/seed-sql.ts",
     "demo/**/*"
   ],

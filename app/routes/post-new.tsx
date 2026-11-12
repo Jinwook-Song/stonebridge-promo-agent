@@ -7,6 +7,8 @@ import { Button } from "../components/ui/button";
 import { Checkbox } from "../components/ui/checkbox";
 import { Field, Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
+import { demoTopicGate } from "../demo/topic-gate.server";
+import { makeClaudeCalls, makeFakeClaudeCalls } from "../promo/claude.server";
 import { startGeneration } from "../promo/generate.server";
 import { createPost } from "../promo/posts.server";
 import { resizeToJpeg } from "../promo/resize-image.client";
@@ -32,6 +34,19 @@ export async function action({ request }: Route.ActionArgs) {
   const files = form.getAll("photos").filter((v): v is File => v instanceof File && v.size > 0);
 
   try {
+    // Public demo only: an off-topic memo gets a reason on the form instead of a post.
+    if ((POST_KINDS as readonly string[]).includes(kind)) {
+      const fakeClaude: string = env.FAKE_CLAUDE;
+      const calls = fakeClaude === "1" ? makeFakeClaudeCalls() : makeClaudeCalls(env.ANTHROPIC_API_KEY);
+      const refused = await demoTopicGate(
+        env,
+        getDb(env.DB),
+        calls.topic,
+        { memo: String(form.get("memo") ?? ""), kind: kind as PostKind },
+        new Date(),
+      );
+      if (refused) return { error: refused };
+    }
     const id = await createPost(
       getDb(env.DB),
       env.PHOTOS,

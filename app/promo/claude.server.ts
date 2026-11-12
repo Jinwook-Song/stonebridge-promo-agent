@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { BetaMessageStreamParams } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import type { z } from "zod";
+import { TopicCheck } from "../demo/topic-check";
 import { ImportOutput, QuoteOutput } from "../quote/prompt";
 import { EventExtract, PriceExtract } from "../watch/extract";
 import { PhotoPickOutput } from "./photo-pick.server";
@@ -71,6 +72,7 @@ export type QuoteCall = (req: ModelRequest) => Promise<ModelResult<QuoteOutput>>
 export type ImportCall = (req: ModelRequest) => Promise<ModelResult<ImportOutput>>;
 export type WatchEventCall = (req: ModelRequest) => Promise<ModelResult<EventExtract>>;
 export type WatchPricesCall = (req: ModelRequest) => Promise<ModelResult<PriceExtract>>;
+export type TopicCall = (req: ModelRequest) => Promise<ModelResult<TopicCheck>>;
 export type ClaudeCalls = {
   drafts: DraftCall;
   rewrite: RewriteCall;
@@ -79,6 +81,8 @@ export type ClaudeCalls = {
   importQuote: ImportCall;
   watchEvent: WatchEventCall;
   watchPrices: WatchPricesCall;
+  /** Public demo only (app/demo/topic-gate.server.ts). */
+  topic: TopicCall;
 };
 
 type Effort = "low" | "medium" | "high";
@@ -156,6 +160,8 @@ export function makeClaudeCalls(apiKey: string): ClaudeCalls {
     // Copying facts out of one page; nothing to judge.
     watchEvent: (req) => call(EventExtract, req, "low", WATCH_REQUEST_OPTIONS),
     watchPrices: (req) => call(PriceExtract, req, "low", WATCH_REQUEST_OPTIONS),
+    // Demo memo check: a yes/no the visitor waits for on the form, same limits as the pick.
+    topic: (req) => call(TopicCheck, req, "low", PICK_REQUEST_OPTIONS),
   };
 }
 
@@ -322,6 +328,7 @@ export function makeFakeClaudeCalls(): ClaudeCalls {
         outputTokens: 0,
       };
     },
+    topic: async () => ({ output: { related: true, reason: "" }, inputTokens: 0, outputTokens: 0 }),
   };
 }
 
