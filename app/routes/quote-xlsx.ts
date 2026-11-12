@@ -47,7 +47,7 @@ export async function loader({ params }: Route.LoaderArgs) {
     // A revision is dated the day it was made, not the day of the first inquiry.
     createdAt: version.createdAt,
   });
-  const name = xlsxFileName(version.event.customerName, version.createdAt, version.version);
+  const name = xlsxFileName(version.event.customerName, version.createdAt, version.version, quote.sender.company);
   return new Response(bytes, {
     headers: {
       "Content-Type": XLSX_TYPE,

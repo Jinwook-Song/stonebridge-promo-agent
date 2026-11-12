@@ -201,6 +201,9 @@ describe("xlsxFileName", () => {
 
   it("drops control characters", () => {
     expect(xlsxFileName("가\r\n나\t다", "2026-11-09T03:00:00.000Z", 1)).toBe("스톤테이블_견적서_가나다_261109_v1.xlsx");
+    // The sender's company leads the name; an unusable one falls back to 견적서.
+    expect(xlsxFileName("가", "2026-11-09T03:00:00.000Z", 1, "돌담 케이터링")).toBe("돌담_케이터링_견적서_가_261109_v1.xlsx");
+    expect(xlsxFileName("가", "2026-11-09T03:00:00.000Z", 1, "  ")).toBe("견적서_견적서_가_261109_v1.xlsx");
   });
 });
 

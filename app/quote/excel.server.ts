@@ -191,19 +191,27 @@ function colLetter(col: number): string {
   return String.fromCharCode(64 + col);
 }
 
-/** `스톤테이블_견적서_<고객>_<YYMMDD>_v<n>.xlsx`; the date is Korean time. */
-export function xlsxFileName(customerName: string, createdAt: string, version: number): string {
-  const cleaned = customerName
+/** Drops what a file name cannot hold, keeping at most 40 code points (an emoji is never cut). */
+function fileNamePart(text: string, fallback: string): string {
+  const cleaned = text
     // Lone surrogates would make encodeURIComponent throw; drop them before anything else.
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "")
     // eslint-disable-next-line no-control-regex
     .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, "")
     .trim()
     .replace(/\s+/g, "_");
-  // By code point, so an emoji is never cut in half.
-  const customer = Array.from(cleaned).slice(0, 40).join("") || "고객";
+  return Array.from(cleaned).slice(0, 40).join("") || fallback;
+}
+
+/**
+ * `<업체>_견적서_<고객>_<YYMMDD>_v<n>.xlsx`; the date is Korean time. The company is the quote's
+ * sender (스톤테이블 unless changed in 견적 설정).
+ */
+export function xlsxFileName(customerName: string, createdAt: string, version: number, company = "스톤테이블"): string {
+  const customer = fileNamePart(customerName, "고객");
+  const sender = fileNamePart(company, "견적서");
   const yymmdd = kstDate(createdAt).slice(2).replace(/-/g, "");
-  return `스톤테이블_견적서_${customer}_${yymmdd}_v${version}.xlsx`;
+  return `${sender}_견적서_${customer}_${yymmdd}_v${version}.xlsx`;
 }
 
 function cellText(value: ExcelJS.CellValue): string {
