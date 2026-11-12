@@ -206,3 +206,18 @@ describe("POST /api/photo-pick", () => {
     }
   });
 });
+
+describe("handlePhotoPick demo cap", () => {
+  it("a bad request does not use up the demo cap", async () => {
+    const allowCall = vi.fn(async () => null);
+    const res = await handlePhotoPick(pickForm([thumb()]), { pick: never, allowCall });
+    expect(res.status).toBe(400);
+    expect(allowCall).not.toHaveBeenCalled();
+  });
+
+  it("over the cap: 429 with the reason, no Claude call", async () => {
+    const res = await handlePhotoPick(pickForm([thumb(), thumb()]), { pick: never, allowCall: async () => "상한이에요" });
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: "상한이에요" });
+  });
+});

@@ -180,3 +180,23 @@ describe("demo reset", () => {
     for (const real of ["스톤브릿지", "스톤테이블", "구리", "stone_bridge"]) expect(text).not.toContain(real);
   });
 });
+
+describe("demo call count failure", () => {
+  it("a post whose count throws fails with the reason instead of staying generating", async () => {
+    const [{ id }] = await db
+      .insert(posts)
+      .values({ kind: "case", memo: "메모", privateCustomer: false, attachPrices: false, status: "draft", createdAt: T0.toISOString() })
+      .returning({ id: posts.id });
+    const create = vi.fn();
+    const broken = new Proxy(db, {
+      get(target, prop, receiver) {
+        if (prop === "insert") return () => { throw new Error("d1 down"); };
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    await startGeneration({ DEMO: "1", GENERATE: { create } as unknown as Env["GENERATE"] }, broken, id, {}, T0);
+    expect(create).not.toHaveBeenCalled();
+    const [post] = await db.select().from(posts).where(eq(posts.id, id));
+    expect(post.status).toBe("failed");
+  });
+});

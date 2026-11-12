@@ -343,9 +343,16 @@ export async function startQuoteGeneration(
   }
 
   // Public demo: over the AI call cap, the version shows why (다시 시도 later) instead of a run.
-  if (isDemo(env) && !(await takeDemoCall(db, "quote", now))) {
-    await markFailed(db, run, DEMO_LIMIT_MESSAGE);
-    return;
+  if (isDemo(env)) {
+    // A failed count must not leave the claim stuck in "generating": show the reason instead.
+    const allowed = await takeDemoCall(db, "quote", now).catch((e: unknown) => {
+      console.error("demo call count failed", e);
+      return false;
+    });
+    if (!allowed) {
+      await markFailed(db, run, DEMO_LIMIT_MESSAGE);
+      return;
+    }
   }
 
   const params: QuoteGenParams = { quoteId, version };

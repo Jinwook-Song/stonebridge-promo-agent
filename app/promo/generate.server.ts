@@ -344,9 +344,16 @@ export async function startGeneration(
   }
 
   // Public demo: over the AI call cap, the post shows why instead of starting a run.
-  if (isDemo(env) && !(await takeDemoCall(db, "post", now))) {
-    await markFailed(db, run, job.channel ? "ready" : "failed", DEMO_LIMIT_MESSAGE);
-    return;
+  if (isDemo(env)) {
+    // A failed count must not leave the claim stuck in "generating": show the reason instead.
+    const allowed = await takeDemoCall(db, "post", now).catch((e: unknown) => {
+      console.error("demo call count failed", e);
+      return false;
+    });
+    if (!allowed) {
+      await markFailed(db, run, job.channel ? "ready" : "failed", DEMO_LIMIT_MESSAGE);
+      return;
+    }
   }
 
   const params: GenerateParams = { postId, ...job };
