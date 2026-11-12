@@ -1,11 +1,13 @@
 import { env } from "cloudflare:workers";
 import { LogOutIcon } from "lucide-react";
-import { Form, Link, Outlet, useLocation, useMatches, useNavigation } from "react-router";
+import { Form, Link, Outlet, useLoaderData, useLocation, useMatches, useNavigation } from "react-router";
 import type { Route } from "./+types/owner-layout";
 import { Logo } from "../components/Logo";
 import { Button } from "../components/ui/button";
 import { litTab } from "../lib/nav-tabs";
 import { cn } from "../lib/utils";
+import { DEMO_DAILY_LIMIT } from "../demo/limits";
+import { isDemo } from "../demo/quota.server";
 import { requireOwner } from "../server/auth.server";
 
 // Middleware runs for every matched child loader AND action (including
@@ -24,7 +26,7 @@ export const middleware: Route.MiddlewareFunction[] = [
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireOwner(request, env);
-  return null;
+  return { demo: isDemo(env) };
 }
 
 const LINKS = [
@@ -35,6 +37,7 @@ const LINKS = [
 ];
 
 export default function OwnerLayout() {
+  const { demo } = useLoaderData<typeof loader>();
   // Routes with wide tables (the quote screens) ask for more room with `handle = { wide: true }`.
   const wide = useMatches().some((m) => (m.handle as { wide?: boolean } | undefined)?.wide === true);
   const { pathname } = useLocation();
@@ -51,13 +54,23 @@ export default function OwnerLayout() {
           <Link to="/" aria-label="글 목록으로">
             <Logo sub="홍보글" />
           </Link>
-          <Form method="post" action="/logout">
-            <Button type="submit" variant="ghost" className="h-11 text-muted-foreground">
-              <LogOutIcon aria-hidden="true" />
-              로그아웃
-            </Button>
-          </Form>
+          {demo ? (
+            <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">데모</span>
+          ) : (
+            <Form method="post" action="/logout">
+              <Button type="submit" variant="ghost" className="h-11 text-muted-foreground">
+                <LogOutIcon aria-hidden="true" />
+                로그아웃
+              </Button>
+            </Form>
+          )}
         </div>
+        {demo && (
+          <p className="mx-4 mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+            누구나 써 보는 데모예요. 가게와 가격은 모두 예시이고, 매일 새벽 4시에 처음 상태로 돌아가요. AI는
+            하루 {DEMO_DAILY_LIMIT}번까지 불러요. 카톡 알림과 경쟁 업체 감시는 꺼져 있어요.
+          </p>
+        )}
         <nav className="flex gap-1 px-3 pb-2" aria-label="메뉴">
           {LINKS.map(({ to, label }) => (
             <Link

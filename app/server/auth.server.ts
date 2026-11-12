@@ -3,6 +3,7 @@ import { redirect } from "react-router";
 import { hashPassword, verifyPassword } from "../lib/crypto";
 import { loginAttempts, settings } from "../../database/schema";
 import type { Db } from "./db";
+import { isDemo } from "../demo/quota.server";
 import { DomainError } from "./errors";
 import { getOwnerSessionStorage } from "./session.server";
 
@@ -65,6 +66,8 @@ export async function attemptLogin(
 
 /** Whether the request carries a valid owner session cookie. Never redirects. */
 export async function isOwner(request: Request, env: Env): Promise<boolean> {
+  // The public demo has no login: every visitor works as the owner of a fictional shop.
+  if (isDemo(env)) return true;
   const session = await getOwnerSessionStorage(env).getSession(request.headers.get("Cookie"));
   return session.get("owner") === true;
 }

@@ -12,7 +12,10 @@ const PICK_FAILED = "사진 고르기에 실패했어요. 직접 골라 주세�
  * 1-based in the `thumbs` order sent) or `{ error }` (400 bad input, 502 model failure).
  * Kept out of the route file: a non-route export there would pull server code into the client.
  */
-export async function handlePhotoPick(request: Request, deps: { pick: PickCall }): Promise<Response> {
+export async function handlePhotoPick(
+  request: Request,
+  deps: { pick: PickCall; /** Public demo: false = over the AI call cap, with the message to show. */ allowCall?: () => Promise<string | null> },
+): Promise<Response> {
   let form: FormData;
   try {
     form = await request.formData();
@@ -22,6 +25,9 @@ export async function handlePhotoPick(request: Request, deps: { pick: PickCall }
 
   const parsed = await readInput(form);
   if (typeof parsed === "string") return Response.json({ error: parsed }, { status: 400 });
+  // Only valid requests count toward the demo cap, so bad posts cannot use it up.
+  const refused = deps.allowCall ? await deps.allowCall() : null;
+  if (refused) return Response.json({ error: refused }, { status: 429 });
 
   try {
     const { picks } = await pickPhotos(deps.pick, parsed);

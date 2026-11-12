@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Field } from "../components/ui/label";
+import { isDemo } from "../demo/quota.server";
 import { attemptLogin, ensureOwnerPassword } from "../server/auth.server";
 import { getDb } from "../server/db";
 import { DomainError } from "../server/errors";
@@ -26,6 +27,7 @@ export function meta({}: Route.MetaArgs) {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
+  if (isDemo(env)) throw redirect("/");
   const session = await getOwnerSessionStorage(env).getSession(request.headers.get("Cookie"));
   if (session.get("owner") === true) throw redirect("/");
   return null;

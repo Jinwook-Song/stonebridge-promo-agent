@@ -1,5 +1,8 @@
 import { env } from "cloudflare:workers";
 import { createRequestHandler } from "react-router";
+import { DEMO_SEED } from "../demo/seed";
+import { isDemo } from "../app/demo/quota.server";
+import { resetDemo } from "../app/demo/reset.server";
 import { purgeOldInquiries } from "../app/inquiry/inquiries.server";
 import { runScheduled } from "../app/kakao/alerts.server";
 import { kakaoConfig } from "../app/kakao/link.server";
@@ -45,6 +48,11 @@ export default {
   // starts its Workflow; the rest are Kakao alerts (CRONS in app/kakao/alerts.server.ts), which
   // answer "unknown_cron" for anything else.
   async scheduled(controller) {
+    // The public demo has one cron: put its sample data back. No Kakao alerts, no watch.
+    if (isDemo(env)) {
+      console.log("demo reset", await resetDemo(env, DEMO_SEED));
+      return;
+    }
     const now = new Date(controller.scheduledTime);
     if (controller.cron === WATCH_CRON) {
       console.log(`competitor watch ${controller.cron}: ${await startWatchRun(env.WATCH, now)}`);

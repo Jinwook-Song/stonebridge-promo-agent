@@ -133,10 +133,11 @@ describe("quote-detail action", () => {
 describe("login guard", () => {
   it("sends a visitor without a session from /quotes to the login page", async () => {
     const request = new Request("http://localhost/quotes");
-    for (const run of [
+    const runs: (() => unknown)[] = [
       () => middleware[0]({ request, params: {}, context: {} } as never, async () => new Response("x")),
       () => layoutLoader({ request, params: {}, context: {} } as never),
-    ]) {
+    ];
+    for (const run of runs) {
       const thrown = await Promise.resolve()
         .then(run)
         .then(

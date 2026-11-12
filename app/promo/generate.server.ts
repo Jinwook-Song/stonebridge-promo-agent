@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { and, eq, exists, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { drafts, photos, posts } from "../../database/schema";
+import { DEMO_LIMIT_MESSAGE, isDemo, takeDemoCall } from "../demo/quota.server";
 import { toBase64 } from "../lib/base64";
 import type { Db } from "../server/db";
 import { DomainError } from "../server/errors";
@@ -308,7 +309,7 @@ function rewrittenHashtags(tags: string[] | null, currentJson: string | null): s
  * can just go on to the post page.
  */
 export async function startGeneration(
-  env: Pick<Env, "GENERATE">,
+  env: Pick<Env, "GENERATE"> & { DEMO?: string },
   db: Db,
   postId: number,
   job: { channel?: Channel; instruction?: string },
@@ -340,6 +341,19 @@ export async function startGeneration(
     const [exists] = await db.select({ id: posts.id }).from(posts).where(eq(posts.id, postId));
     if (!exists) throw new DomainError("NOT_FOUND", "글을 찾을 수 없어요.");
     throw new DomainError("BUSY", "이미 만드는 중이에요.");
+  }
+
+  // Public demo: over the AI call cap, the post shows why instead of starting a run.
+  if (isDemo(env)) {
+    // A failed count must not leave the claim stuck in "generating": show the reason instead.
+    const allowed = await takeDemoCall(db, "post", now).catch((e: unknown) => {
+      console.error("demo call count failed", e);
+      return false;
+    });
+    if (!allowed) {
+      await markFailed(db, run, job.channel ? "ready" : "failed", DEMO_LIMIT_MESSAGE);
+      return;
+    }
   }
 
   const params: GenerateParams = { postId, ...job };
