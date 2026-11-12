@@ -7,6 +7,8 @@
     "dev": "react-router dev",
     "typecheck": "wrangler types && react-router typegen && tsc -b",
     "deploy": "npm run build && wrangler deploy && npm run deploy:edge",
+    "deploy:demo": "CLOUDFLARE_ENV=demo react-router build && CLOUDFLARE_ENV=demo wrangler deploy && npm run deploy:edge-demo",
+    "deploy:edge-demo": "cd edge-demo && mkdir -p .wrangler/deploy && echo '{\"configPath\":\"../../wrangler.jsonc\"}' > .wrangler/deploy/config.json && wrangler pages deploy --branch main --commit-dirty=true",
     "deploy:edge": "cd edge && mkdir -p .wrangler/deploy && echo '{\"configPath\":\"../../wrangler.jsonc\"}' > .wrangler/deploy/config.json && wrangler pages deploy --branch main --commit-dirty=true",
     "preview": "npm run build && vite preview",
     "cf-typegen": "wrangler types",

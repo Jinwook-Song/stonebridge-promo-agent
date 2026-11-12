@@ -1,6 +1,7 @@
 import { and, eq, gte, lte } from "drizzle-orm";
 import { demoCalls } from "../../database/schema";
 import type { Db } from "../server/db";
+import { DEMO_DAILY_LIMIT, DEMO_HOURLY_LIMIT } from "./limits";
 
 /**
  * The public demo (wrangler env.demo, DEMO = "1"): anyone can open it without a login, so every
@@ -12,9 +13,7 @@ export function isDemo(env: { DEMO?: string }): boolean {
 
 export type DemoCallKind = "post" | "quote" | "photo_pick";
 
-/** Whole demo, per KST day and per rolling hour. About $0.1 a call, so at most ~$4 a day. */
-export const DEMO_DAILY_LIMIT = 40;
-export const DEMO_HOURLY_LIMIT = 12;
+export { DEMO_DAILY_LIMIT, DEMO_HOURLY_LIMIT };
 
 export const DEMO_LIMIT_MESSAGE =
   `데모는 AI를 1시간에 ${DEMO_HOURLY_LIMIT}번, 하루에 ${DEMO_DAILY_LIMIT}번까지 불러요. 잠시 뒤에 다시 써 보세요.`;

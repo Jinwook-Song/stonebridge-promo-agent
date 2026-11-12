@@ -1,0 +1,8 @@
+// Seoul front for the public demo, same as edge/ for the owner's app: forwards every request to
+// the stonebridge-promo-demo Worker over a service binding. Deploy: `npm run deploy:demo`.
+{
+	"name": "stonebridge-promo-demo",
+	"pages_build_output_dir": "./public",
+	"compatibility_date": "2026-11-01",
+	"services": [{ "binding": "APP", "service": "stonebridge-promo-demo" }]
+}

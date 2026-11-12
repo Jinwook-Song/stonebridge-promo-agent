@@ -6,7 +6,8 @@ import { Logo } from "../components/Logo";
 import { Button } from "../components/ui/button";
 import { litTab } from "../lib/nav-tabs";
 import { cn } from "../lib/utils";
-import { DEMO_DAILY_LIMIT, isDemo } from "../demo/quota.server";
+import { DEMO_DAILY_LIMIT } from "../demo/limits";
+import { isDemo } from "../demo/quota.server";
 import { requireOwner } from "../server/auth.server";
 
 // Middleware runs for every matched child loader AND action (including
